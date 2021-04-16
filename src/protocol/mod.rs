@@ -166,6 +166,9 @@ pub mod finf;
 /// - Fragmented PNG - PNG data fragments (for streams oly). Requires MSEX 1.2.
 pub mod msex;
 
+
+pub mod caex;
+
 /// A trait for writing any of the CITP protocol types to little-endian bytes.
 ///
 /// A blanket implementation is provided for all types that implement `byteorder::WriteBytesExt`.
@@ -235,8 +238,8 @@ pub struct Header {
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub union Kind {
-    request_index: u16,
-    in_response_to: u16,
+    pub request_index: u16,
+    pub in_response_to: u16,
 }
 
 impl WriteToBytes for Kind {
@@ -416,4 +419,66 @@ where
     let mut vec = Vec::with_capacity(len);
     read_vec(reader, len, &mut vec)?;
     Ok(vec)
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Ucs2(Vec<u16>);
+
+impl Ucs2 {
+    /// Read ucs2 bytes until [0,0] is found
+    fn read_from_bytes<R: ReadBytesExt>(reader: R) -> io::Result<Self> {
+        let mut ucs2: Ucs2 = Ucs2(Vec::new());
+        let mut bytes = reader.bytes();
+        while let Some(curr) = bytes.next() {
+            if let Some(next) = bytes.next() {
+                let val = [curr?, next?];
+                let y = u16::from_le_bytes(val);
+                if y == 0 {
+                    break;
+                } else {
+                    ucs2.0.push(y);
+                }
+            }
+        }
+        Ok(ucs2)
+    }
+
+    fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
+        for n in &self.0 {
+            writer.write_u16::<LE>(*n)?;
+        }
+        // Write a 0 to the final 2 bytes to indicate a null terminated ucs2 string
+        writer.write_u16::<LE>(0)?;
+        Ok(())
+    }
+    
+    pub fn from_str(s: &str) -> Result<Self, ucs2::Error> {
+        let mut ucs2_buf = vec![0u16; s.len()];
+        ucs2::encode(s, &mut ucs2_buf)?;
+        Ok(Ucs2(ucs2_buf))
+    }
+
+    pub fn to_string(&self) -> Result<String, ucs2::Error> {
+        let mut utf8_buf = vec![0u8; self.0.len()];
+        ucs2::decode(&self.0, &mut utf8_buf)?;
+        let name = std::str::from_utf8(&utf8_buf).unwrap().clone().to_string();
+        Ok(name)
+    }
+}
+
+impl SizeBytes for Ucs2 {
+    fn size_bytes(&self) -> usize {
+        let null_terminated_bytes_len = 2;
+        mem::size_of::<u16>() * self.0.len() + null_terminated_bytes_len
+    }
+}
+
+impl fmt::Debug for Ucs2 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match self.to_string() {
+            Ok(n) => n,
+            Err(_) => "unable to read string from Ucs2".to_string(),
+        };
+        write!(f, "{}", name)
+    }
 }
