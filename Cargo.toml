@@ -11,3 +11,8 @@ homepage = "https://github.com/nannou-org/citp"
 
 [dependencies]
 byteorder = "1.2.3"
+ucs2 = "0.3.2"
+
+[[example]]
+name = "demo"
+path = "examples/demo/demo.rs"
