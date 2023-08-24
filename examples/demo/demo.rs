@@ -1,15 +1,19 @@
 extern crate citp;
-
-use citp::protocol::{WriteToBytes, SizeBytes, ReadFromBytes};
-use citp::protocol::{pinf, caex, sdmx};
-use std::net::UdpSocket;
-use std::net::Ipv4Addr;
-use std::ffi::CString;
-use std::net::TcpStream;
-use std::io::{self, Write};
-
+extern crate socket2;
 mod citp_tcp;
+
+use citp::protocol::{
+    WriteToBytes, SizeBytes, ReadFromBytes,
+    pinf, caex, sdmx,
+};
 use citp_tcp::CitpTcp;
+use socket2::{Socket, Domain, Type, Protocol};
+use std::{
+    ffi::CString,
+    net::{TcpStream, SocketAddrV4, Ipv4Addr},
+    io::{self, Write},
+    mem::MaybeUninit,
+};
 
 pub const CITP_HEADER_LEN: usize = 20;
 pub const CONTENT_TYPE_LEN: usize = 4;
@@ -27,9 +31,20 @@ enum State {
 fn main() -> io::Result<()> {    
     let mut state = State::Init;
 
-    let multicast_port = format!("{}",citp::protocol::pinf::MULTICAST_PORT);
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}",multicast_port)).expect("Cant bind to UDP Socket!");
-    let mut buf = [0u8; 65535];
+    // let multicast_port = format!("{}",citp::protocol::pinf::MULTICAST_PORT);
+    // let socket = UdpSocket::bind(format!("0.0.0.0:{}",multicast_port)).expect("Cant bind to UDP Socket!");
+    let multicast_port = citp::protocol::pinf::MULTICAST_PORT;
+    let domain = Domain::IPV4;
+    let socket_type = Type::DGRAM;
+    let protocol = Protocol::UDP;
+    let socket = Socket::new(domain, socket_type, Some(protocol))?;
+    socket.set_reuse_address(true)?;
+    let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), multicast_port);
+    socket.bind(&address.into())?;
+    
+    // let mut buf = [0u8; 65535];
+    let mut buf: [MaybeUninit<u8>; 65535] = unsafe { MaybeUninit::uninit().assume_init() };                    
+
     let addr = citp::protocol::pinf::OLD_MULTICAST_ADDR;
     let multi_addr = Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]);
     let inter = Ipv4Addr::new(0,0,0,0);
@@ -57,7 +72,7 @@ fn main() -> io::Result<()> {
                 match socket.recv_from(&mut buf) {
                     Ok((len, remote_addr)) => {
                         // - Read the full base **Header** first.
-                        let data = &buf[..len];
+                        let data = to_data(&mut buf, len);
                         let header = citp::protocol::Header::read_from_bytes(data)?;
                         let header_size = header.size_bytes();
                         
@@ -75,7 +90,7 @@ fn main() -> io::Result<()> {
     
                                     //Use the remote_addr to connect to the socket
                                     // only if it isn't already connected
-                                    match socket.connect(remote_addr) {
+                                    match socket.connect(&remote_addr) {
                                         Ok(_) => (),
                                         Err(err) => eprint!("couldn't connect to TCP socket addr {:?}", err),
                                     }
@@ -149,12 +164,11 @@ fn main() -> io::Result<()> {
                 }
                 
                 frame_num += 1;
-                    
+
                 match socket.recv_from(&mut buf) {
                     Ok((len, remote_addr)) => {
                         // - Read the full base **Header** first.
-                        let data = &buf[..len];
-                        let header = citp::protocol::Header::read_from_bytes(data).unwrap();
+                        let header = citp::protocol::Header::read_from_bytes(to_data(&mut buf, len)).unwrap();
                         let header_size = header.size_bytes();
                         
                         // match &header.content_type.to_le_bytes() {
@@ -169,6 +183,11 @@ fn main() -> io::Result<()> {
         }
         std::thread::sleep(std::time::Duration::from_millis(32));   
     }
+}
+
+fn to_data(buf: &mut [MaybeUninit<u8>], len: usize) -> &[u8] {
+    let ptr = buf.as_mut_ptr() as *mut u8;
+    unsafe { std::slice::from_raw_parts_mut(ptr, len) }
 }
 
 fn extract_ip_address(s: &String) -> String {
