@@ -28,10 +28,10 @@
 //! - Read the header for the second layer.
 //! - Match on the `content_type` field of the second layer to determine what type to read.
 
-pub use byteorder::{LE, ReadBytesExt, WriteBytesExt};
+pub use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use std::ffi::CString;
-use std::{fmt, io, mem};
 use std::hash::{Hash, Hasher};
+use std::{fmt, io, mem};
 
 /// ## CITP/PINF - Peer Information Layer
 ///
@@ -166,7 +166,6 @@ pub mod finf;
 /// - Fragmented PNG - PNG data fragments (for streams oly). Requires MSEX 1.2.
 pub mod msex;
 
-
 pub mod caex;
 
 /// A trait for writing any of the CITP protocol types to little-endian bytes.
@@ -244,9 +243,7 @@ pub union Kind {
 
 impl WriteToBytes for Kind {
     fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
-        unsafe {
-            writer.write_u16::<LE>(self.request_index)
-        }
+        unsafe { writer.write_u16::<LE>(self.request_index) }
     }
 }
 
@@ -341,9 +338,7 @@ impl ReadFromBytes for CString {
                 byte => bytes.push(byte),
             }
         }
-        let cstring = unsafe {
-            CString::from_vec_unchecked(bytes)
-        };
+        let cstring = unsafe { CString::from_vec_unchecked(bytes) };
         Ok(cstring)
     }
 }
@@ -380,9 +375,7 @@ impl SizeBytes for Header {
 
 impl fmt::Debug for Kind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unsafe {
-            write!(f, "{:?}", self.request_index)
-        }
+        unsafe { write!(f, "{:?}", self.request_index) }
     }
 }
 
@@ -390,9 +383,7 @@ impl Eq for Kind {}
 
 impl PartialEq for Kind {
     fn eq(&self, other: &Self) -> bool {
-        unsafe {
-            self.request_index == other.request_index
-        }
+        unsafe { self.request_index == other.request_index }
     }
 }
 
@@ -434,7 +425,7 @@ pub struct Ucs2(Vec<u16>);
 
 impl Ucs2 {
     /// Read ucs2 bytes until [0,0] is found
-    fn read_from_bytes<R: ReadBytesExt>(reader: R) -> io::Result<Self> {
+    fn read_from_bytes<R: ReadBytesExt>(mut reader: R) -> io::Result<Self> {
         let mut ucs2: Ucs2 = Ucs2(Vec::new());
         let mut bytes = reader.bytes();
         while let Some(curr) = bytes.next() {
@@ -459,7 +450,7 @@ impl Ucs2 {
         writer.write_u16::<LE>(0)?;
         Ok(())
     }
-    
+
     pub fn from_str(s: &str) -> Result<Self, ucs2::Error> {
         let mut ucs2_buf = vec![0u16; s.len()];
         ucs2::encode(s, &mut ucs2_buf)?;

@@ -1,7 +1,7 @@
-use protocol::{self, LE, ReadBytesExt, ReadFromBytes, SizeBytes, WriteBytes, WriteBytesExt,
-               WriteToBytes};
+use protocol::{
+    self, ReadBytesExt, ReadFromBytes, SizeBytes, WriteBytes, WriteBytesExt, WriteToBytes, LE,
+};
 use std::borrow::Cow;
-use std::ffi::CString;
 use std::{io, mem};
 extern crate ucs2;
 
@@ -15,6 +15,36 @@ pub struct Header {
     pub citp_header: protocol::Header,
     /// A cookie defining which CAEX message it is.
     pub content_type: u32,
+}
+
+/// This message must be sent by Capture or a peer in response to any unknown message or any request that prompts a reply
+// which cannot be served. The CITP header RequestIndex and InResponseTo fields must be honored when sending this
+// message.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub struct Nack {
+    pub reason: NackReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum NackReason {
+    UnknownRequest = 0x00,
+    IncorrectRequest = 0x01,
+    InternalError = 0x02,
+    RequestRefused = 0x03,
+}
+
+impl From<u8> for NackReason {
+    fn from(orig: u8) -> Self {
+        match orig {
+            0x00 => return NackReason::UnknownRequest,
+            0x01 => return NackReason::IncorrectRequest,
+            0x02 => return NackReason::InternalError,
+            0x03 => return NackReason::RequestRefused,
+            _ => unreachable!(),
+        };
+    }
 }
 
 /// Layout of CAEX messages.
@@ -46,7 +76,7 @@ pub struct Message<T> {
 /// - If the user chooses to disable synchronization: act as if the user had closed the show.
 /// - If the user chooses to reenable synchronization: act as if the user had just opened the
 ///   current show.
-/// 
+///
 /// It is important that the peer, upon receving complete patch information when both the peer and Capture have
 /// entered a show, provides the user with the means to determine whether the patch is in sync and/or requires
 /// modification, as well as the option to disable the synchronization
@@ -72,6 +102,21 @@ pub struct LeaveShow {}
 #[repr(C)]
 pub struct FixtureListRequest {}
 
+/// This message is sent in response to a FixtureListRequest message (with Type = 0x00) as well as unsolicited by both Capture
+/// and the peer (with Type = 0x01 or Type = 0x02). An existing patch fixture list (Type = 0x00) must contain all known fixtures while
+/// a new fixture (Type = 0x01) or exchanged fixture (Type = 0x02) message contains only the fixture(s) that were recently added or
+/// exchanged for other fixtures.
+#[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
+pub struct FixtureList<'a> {
+    pub message_type: FixtureListMessageType,
+    /// The number of fixtures following
+    pub fixture_count: u16,
+    /// The array of fixtures in the message
+    pub fixtures: Cow<'a, [Fixture<'a>]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum FixtureListMessageType {
     ExistingPatchList = 0x00,
@@ -79,20 +124,103 @@ pub enum FixtureListMessageType {
     ExchangeFixture = 0x02,
 }
 
-/// This message is sent unsolicited by both Capture and the peer whenever a fixture has been modified. All fields must always be
-/// present, but it is important that the ChangedFields field indicates which have actually been modified.
+impl From<u8> for FixtureListMessageType {
+    fn from(orig: u8) -> Self {
+        match orig {
+            0x00 => return FixtureListMessageType::ExistingPatchList,
+            0x01 => return FixtureListMessageType::NewFixture,
+            0x02 => return FixtureListMessageType::ExchangeFixture,
+            _ => unreachable!(),
+        };
+    }
+}
+
+impl From<FixtureListMessageType> for u8 {
+    fn from(original: FixtureListMessageType) -> u8 {
+        match original {
+            FixtureListMessageType::ExistingPatchList => 0x00,
+            FixtureListMessageType::NewFixture => 0x01,
+            FixtureListMessageType::ExchangeFixture => 0x02,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum IdentifierType {
+    RDMDeviceModelId = 0x00, // u16
+    /// (Note: The RDMPersonalityId IdentifierType is incorrectly uint64 when it should have been uint16. As a result of this, the highest six bytes should be set to zero)
+    RDMPersonalityId = 0x01, // u64
+    AtlaBaseFixtureId = 0x02, // guid
+    AtlaBaseModeId = 0x03,   // guid
+    CaptureInstanceId = 0x04, // guid
+    RDMManufacturerId = 0x05, // u16
+}
+
+impl From<u8> for IdentifierType {
+    fn from(orig: u8) -> Self {
+        match orig {
+            0x00 => return IdentifierType::RDMDeviceModelId,
+            0x01 => return IdentifierType::RDMPersonalityId,
+            0x02 => return IdentifierType::AtlaBaseFixtureId,
+            0x03 => return IdentifierType::AtlaBaseModeId,
+            0x04 => return IdentifierType::CaptureInstanceId,
+            0x05 => return IdentifierType::RDMManufacturerId,
+            _ => unreachable!(),
+        };
+    }
+}
+
+impl From<IdentifierType> for u8 {
+    fn from(original: IdentifierType) -> u8 {
+        match original {
+            IdentifierType::RDMDeviceModelId => 0x00,
+            IdentifierType::RDMPersonalityId => 0x01,
+            IdentifierType::AtlaBaseFixtureId => 0x02,
+            IdentifierType::AtlaBaseModeId => 0x03,
+            IdentifierType::CaptureInstanceId => 0x04,
+            IdentifierType::RDMManufacturerId => 0x05,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
-pub struct FixtureModify<'a> {
-    /// The number of fixtures following.
-    pub fixture_count: u16,
-    /// Array of fixture identifiers.
-    pub fixture_identifiers: Cow<'a, [u32]>,
+pub struct Identifier<'a> {
+    pub identifier_type: IdentifierType,
+    /// The size of the data following.
+    pub data_size: u16,
+    /// Identifier type specific data.
+    pub data: Cow<'a, [u8]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
-pub struct FixtureInfo {
+pub struct Fixture<'a> {
+    /// Console's fixture identifier.
+    /// Set to 0xffffffff if unknown by Capture.
+    pub fixture_identifier: u32,
+    /// The name of the fixture's manufacturer.
+    pub manufacturer_name: Ucs2,
+    /// The model name of the fixture.
+    pub fixture_name: Ucs2,
+    /// The name of DMX mode.
+    pub mode_name: Ucs2,
+    /// The number of channels of the DMX mode.
+    pub channel_count: u16,
+    /// A boolean 0x00 or 0x01 indicating whether it's a dimmer (only) fixture or not.
+    pub is_dimmer: u8,
+    /// The number of following identifier blocks.
+    pub identifier_count: u8,
+    /// The fixtures identifiers
+    pub identifiers: Cow<'a, [Identifier<'a>]>,
+    /// The DMX patching and viz position and roation information
+    pub data: FixtureData,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[repr(C)]
+pub struct FixtureData {
     /// A boolean 0x00 or 0x01 indicating whether the fixture is patched or not.
     pub patched: u8,
     /// The (0-based) universe index.
@@ -157,6 +285,10 @@ impl FixtureListRequest {
     pub const CONTENT_TYPE: u32 = 0x00020200;
 }
 
+impl<'a> FixtureList<'a> {
+    pub const CONTENT_TYPE: u32 = 0x00020201;
+}
+
 impl<'a> FixtureRemove<'a> {
     pub const CONTENT_TYPE: u32 = 0x00020203;
 }
@@ -189,7 +321,8 @@ pub struct LaserFeedList<'a> {
     /// The number of laser feed listings that follow.
     pub feed_count: u8,
     /// The name of the feed.
-    pub feed_names: Cow<'a, [CString]>,
+    pub feed_names: Cow<'a, [Ucs2]>,
+    //pub feed_names: Cow<'a, [CString]>,
 }
 
 /// This message is sent by Capture to indicate whether it wishes a laser feed to be transmitted or not. The frame rate
@@ -220,7 +353,7 @@ pub struct LaserFeedFrame<'a> {
 }
 
 /// Example of how a point in constructed
-/// 
+///
 /// Point.X [0, 4093] = Point.XLowByte + (Point.XYHighNibbles & 0x0f) << 8
 /// Point.Y [0, 4093] = Point.YLowByte + (Point.XYHighNibbles & 0xf0) << 4
 /// Point.R [0, 31] = Point.Color & 0x001f
@@ -243,6 +376,10 @@ impl Header {
     pub const CONTENT_TYPE: &'static [u8; 4] = b"CAEX";
 }
 
+impl Nack {
+    pub const CONTENT_TYPE: u32 = 0xFFFFFFFF;
+}
+
 impl GetLaserFeedList {
     pub const CONTENT_TYPE: u32 = 0x00030100;
 }
@@ -258,7 +395,6 @@ impl LaserFeedControl {
 impl<'a> LaserFeedFrame<'a> {
     pub const CONTENT_TYPE: u32 = 0x00030200;
 }
-
 
 impl WriteToBytes for Header {
     fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
@@ -279,13 +415,87 @@ where
     }
 }
 
+impl WriteToBytes for EnterShow {
+    fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
+        self.name.write_to_bytes(&mut writer)?;
+        Ok(())
+    }
+}
+
+impl<'a> WriteToBytes for FixtureList<'a> {
+    fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_u8(self.message_type.into())?;
+        writer.write_u16::<LE>(self.fixture_count)?;
+        for fixture in self.fixtures.iter() {
+            fixture.write_to_bytes(&mut writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl<'a> WriteToBytes for Fixture<'a> {
+    fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_u32::<LE>(self.fixture_identifier)?;
+        self.manufacturer_name.write_to_bytes(&mut writer)?;
+        self.fixture_name.write_to_bytes(&mut writer)?;
+        self.mode_name.write_to_bytes(&mut writer)?;
+        writer.write_u16::<LE>(self.channel_count)?;
+        writer.write_u8(self.is_dimmer)?;
+        writer.write_u8(self.identifier_count)?;
+        for identifier in self.identifiers.iter() {
+            identifier.write_to_bytes(&mut writer)?;
+        }
+        self.data.write_to_bytes(&mut writer)?;
+        Ok(())
+    }
+}
+
+impl<'a> WriteToBytes for Identifier<'a> {
+    fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_u8(self.identifier_type.into())?;
+        writer.write_u16::<LE>(self.data_size)?;
+        for i in 0..self.data_size {
+            writer.write_u8(self.data[i as usize])?;
+        }
+        Ok(())
+    }
+}
+
+impl WriteToBytes for FixtureData {
+    fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_u8(self.patched)?;
+        writer.write_u8(self.universe)?;
+        writer.write_u16::<LE>(self.universe_channel)?;
+        self.unit.write_to_bytes(&mut writer)?;
+        writer.write_u16::<LE>(self.channel)?;
+        self.circuit.write_to_bytes(&mut writer)?;
+        self.note.write_to_bytes(&mut writer)?;
+        writer.write_f32::<LE>(self.position[0])?;
+        writer.write_f32::<LE>(self.position[1])?;
+        writer.write_f32::<LE>(self.position[2])?;
+        writer.write_f32::<LE>(self.angles[0])?;
+        writer.write_f32::<LE>(self.angles[1])?;
+        writer.write_f32::<LE>(self.angles[2])?;
+        Ok(())
+    }
+}
+
+impl<'a> WriteToBytes for FixtureRemove<'a> {
+    fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
+        writer.write_u16::<LE>(self.fixture_count)?;        
+        for id in self.fixture_identifiers.iter() {
+            writer.write_u32::<LE>(*id)?;
+        }
+        Ok(())
+    }
+}
+
 impl<'a> WriteToBytes for LaserFeedList<'a> {
     fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
         writer.write_u32::<LE>(self.source_key)?;
         writer.write_u8(self.feed_names.len() as _)?;
-        for n in self.feed_names.iter() {
-            let ucs2 = Ucs2::from_str(n.to_str().unwrap()).unwrap();
-            ucs2.write_to_bytes(&mut writer)?;
+        for name in self.feed_names.iter() {
+            name.write_to_bytes(&mut writer)?;
         }
         Ok(())
     }
@@ -326,7 +536,10 @@ impl ReadFromBytes for LaserFeedControl {
     fn read_from_bytes<R: ReadBytesExt>(mut reader: R) -> io::Result<Self> {
         let feed_index = reader.read_u8()?;
         let frame_rate = reader.read_u8()?;
-        let laser_feed_control = LaserFeedControl { feed_index, frame_rate };
+        let laser_feed_control = LaserFeedControl {
+            feed_index,
+            frame_rate,
+        };
         Ok(laser_feed_control)
     }
 }
@@ -338,24 +551,188 @@ impl ReadFromBytes for EnterShow {
     }
 }
 
+impl<'a> ReadFromBytes for FixtureList<'a> {
+    fn read_from_bytes<R: ReadBytesExt>(mut reader: R) -> io::Result<Self> {
+        let message_type: FixtureListMessageType = reader.read_u8()?.into();
+        let fixture_count = reader.read_u16::<LE>()?;
+        let mut fixtures = Vec::new();
+        for _ in 0..fixture_count {
+            let fixture_identifier = reader.read_u32::<LE>()?;
+            let manufacturer_name = Ucs2::read_from_bytes(&mut reader)?;
+            let fixture_name = Ucs2::read_from_bytes(&mut reader)?;
+            let mode_name = Ucs2::read_from_bytes(&mut reader)?;
+            let channel_count = reader.read_u16::<LE>()?;
+            let is_dimmer = reader.read_u8()?;
+            let identifier_count = reader.read_u8()?;
+            let mut identifiers = Vec::new();
+            for _ in 0..identifier_count {
+                identifiers.push(Identifier::read_from_bytes(&mut reader)?);
+            }
+            let data = FixtureData::read_from_bytes(&mut reader)?;
+
+            fixtures.push(Fixture {
+                fixture_identifier,
+                manufacturer_name,
+                fixture_name,
+                mode_name,
+                channel_count,
+                is_dimmer,
+                identifier_count,
+                identifiers: Cow::Owned(identifiers),
+                data,
+            })
+        }
+
+        Ok(FixtureList {
+            message_type,
+            fixture_count,
+            fixtures: Cow::Owned(fixtures),
+        })
+    }
+}
+
+impl<'a> ReadFromBytes for Identifier<'a> {
+    fn read_from_bytes<R: ReadBytesExt>(mut reader: R) -> io::Result<Self> {
+        let identifier_type: IdentifierType = reader.read_u8()?.into();
+        let data_size = reader.read_u16::<LE>()?;
+        let mut data = vec![0u8; data_size.into()];
+        reader.read_exact(&mut data)?;
+        Ok(Identifier {
+            identifier_type,
+            data_size,
+            data: Cow::Owned(data),
+        })
+    }
+}
+
+impl ReadFromBytes for FixtureData {
+    fn read_from_bytes<R: ReadBytesExt>(mut reader: R) -> io::Result<Self> {
+        Ok(FixtureData {
+            patched: reader.read_u8()?,
+            universe: reader.read_u8()?,
+            universe_channel: reader.read_u16::<LE>()?,
+            unit: Ucs2::read_from_bytes(&mut reader)?,
+            channel: reader.read_u16::<LE>()?,
+            circuit: Ucs2::read_from_bytes(&mut reader)?,
+            note: Ucs2::read_from_bytes(&mut reader)?,
+            position: [
+                reader.read_f32::<LE>()?,
+                reader.read_f32::<LE>()?,
+                reader.read_f32::<LE>()?,
+            ],
+            angles: [
+                reader.read_f32::<LE>()?,
+                reader.read_f32::<LE>()?,
+                reader.read_f32::<LE>()?,
+            ],
+        })
+    }
+}
+
+impl<'a> ReadFromBytes for FixtureRemove<'a> {
+    fn read_from_bytes<R: ReadBytesExt>(mut reader: R) -> io::Result<Self> {
+        let fixture_count = reader.read_u16::<LE>()?;
+        let mut fixture_identifiers = Vec::new();
+        for _ in 0..fixture_count {
+            fixture_identifiers.push(reader.read_u32::<LE>()?);
+        }
+        Ok(FixtureRemove { 
+            fixture_count,
+            fixture_identifiers: Cow::Owned(fixture_identifiers),
+        }) 
+    }
+}
+
+
+impl SizeBytes for EnterShow {
+    fn size_bytes(&self) -> usize {
+        self.name.size_bytes()
+    }
+}
+
+impl<'a> SizeBytes for FixtureList<'a> {
+    fn size_bytes(&self) -> usize {
+        let mut fixtures_size = 0;
+        for fixture in self.fixtures.iter() {
+            fixtures_size += fixture.size_bytes();
+        }
+        mem::size_of::<u8>()
+        + mem::size_of::<u16>()
+        + fixtures_size
+    }
+}
+
+impl<'a> SizeBytes for Identifier<'a> {
+    fn size_bytes(&self) -> usize {
+        let mut data_size = 0;
+        for _ in self.data.iter() {
+            data_size += mem::size_of::<u8>();
+        }
+        mem::size_of::<u8>()
+        + mem::size_of::<u16>()
+        + data_size
+    }
+}
+
+impl<'a> SizeBytes for Fixture<'a> {
+    fn size_bytes(&self) -> usize {
+        let mut identifiers_size = 0;
+        for identifier in self.identifiers.iter() {
+            identifiers_size += identifier.size_bytes();
+        }
+
+        mem::size_of::<u32>()
+        + self.manufacturer_name.size_bytes()
+        + self.fixture_name.size_bytes()
+        + self.mode_name.size_bytes()
+        + mem::size_of::<u16>()
+        + mem::size_of::<u8>()
+        + mem::size_of::<u8>()
+        + identifiers_size
+        + self.data.size_bytes()
+    }
+}
+
+impl SizeBytes for FixtureData {
+    fn size_bytes(&self) -> usize {
+        mem::size_of::<u8>()
+        + mem::size_of::<u8>()
+        + mem::size_of::<u16>()
+        + self.unit.size_bytes()
+        + mem::size_of::<u16>()
+        + self.circuit.size_bytes()
+        + self.note.size_bytes()
+        + (mem::size_of::<f32>() * 3)
+        + (mem::size_of::<f32>() * 3)
+    }
+}
+
+impl<'a> SizeBytes for FixtureRemove<'a> {
+    fn size_bytes(&self) -> usize {
+        let mut fixture_ids_size = 0;
+        for _ in 0..self.fixture_count {
+            fixture_ids_size += mem::size_of::<u32>();
+        }
+        
+        mem::size_of::<u16>()
+        + fixture_ids_size
+    }
+}
+
 
 impl<'a> SizeBytes for LaserFeedList<'a> {
     fn size_bytes(&self) -> usize {
         let mut feed_names_size = 0;
-        for n in self.feed_names.iter() {
-            let ucs2 = Ucs2::from_str(&n.to_str().unwrap()).unwrap();
-            feed_names_size += ucs2.size_bytes();
+        for name in self.feed_names.iter() {
+            feed_names_size += name.size_bytes();
         }
-        mem::size_of::<u32>()
-        + mem::size_of::<u8>()
-        + feed_names_size
+        mem::size_of::<u32>() + mem::size_of::<u8>() + feed_names_size
     }
 }
 
 impl SizeBytes for LaserFeedControl {
     fn size_bytes(&self) -> usize {
-        mem::size_of::<u8>()
-        + mem::size_of::<u8>()
+        mem::size_of::<u8>() + mem::size_of::<u8>()
     }
 }
 
@@ -364,22 +741,17 @@ impl<'a> SizeBytes for LaserFeedFrame<'a> {
         let mut ps = 0;
         for p in self.points.iter() {
             ps += p.size_bytes();
-        } 
+        }
         mem::size_of::<u32>()
-        + mem::size_of::<u8>()
-        + mem::size_of::<u32>()
-        + mem::size_of::<u16>()
-        + ps
+            + mem::size_of::<u8>()
+            + mem::size_of::<u32>()
+            + mem::size_of::<u16>()
+            + ps
     }
 }
 
 impl SizeBytes for LaserPoint {
     fn size_bytes(&self) -> usize {
-        mem::size_of::<u8>()
-        + mem::size_of::<u8>()
-        + mem::size_of::<u8>()
-        + mem::size_of::<u16>()
+        mem::size_of::<u8>() + mem::size_of::<u8>() + mem::size_of::<u8>() + mem::size_of::<u16>()
     }
 }
-
-

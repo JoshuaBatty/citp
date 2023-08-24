@@ -1,5 +1,7 @@
-use protocol::{self, LE, ReadBytes, ReadBytesExt, ReadFromBytes, SizeBytes, WriteBytes,
-               WriteBytesExt, WriteToBytes};
+use protocol::{
+    self, ReadBytes, ReadBytesExt, ReadFromBytes, SizeBytes, WriteBytes, WriteBytesExt,
+    WriteToBytes, LE,
+};
 use std::borrow::Cow;
 use std::ffi::CString;
 use std::{io, mem};
@@ -52,4 +54,3 @@ pub struct CInf<'a> {
     /// A hint that future versions of this message may contain trailing data.
     pub future_message_data: Cow<'a, [u8]>,
 }
-
