@@ -166,7 +166,6 @@ pub mod finf;
 /// - Fragmented PNG - PNG data fragments (for streams oly). Requires MSEX 1.2.
 pub mod msex;
 
-
 pub mod caex;
 
 /// A trait for writing any of the CITP protocol types to little-endian bytes.
@@ -426,7 +425,7 @@ pub struct Ucs2(Vec<u16>);
 
 impl Ucs2 {
     /// Read ucs2 bytes until [0,0] is found
-    fn read_from_bytes<R: ReadBytesExt>(reader: R) -> io::Result<Self> {
+    fn read_from_bytes<R: ReadBytesExt>(mut reader: R) -> io::Result<Self> {
         let mut ucs2: Ucs2 = Ucs2(Vec::new());
         let mut bytes = reader.bytes();
         while let Some(curr) = bytes.next() {
@@ -451,7 +450,7 @@ impl Ucs2 {
         writer.write_u16::<LE>(0)?;
         Ok(())
     }
-    
+
     pub fn from_str(s: &str) -> Result<Self, ucs2::Error> {
         let mut ucs2_buf = vec![0u16; s.len()];
         ucs2::encode(s, &mut ucs2_buf)?;
