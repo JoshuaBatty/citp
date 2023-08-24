@@ -14,6 +14,8 @@ use citp_tcp::CitpTcp;
 pub const CITP_HEADER_LEN: usize = 20;
 pub const CONTENT_TYPE_LEN: usize = 4;
 
+pub const NUM_LASERS: i32 = 1;
+
 #[derive(Debug)]
 enum State {
     Init,
@@ -39,7 +41,7 @@ fn main() -> io::Result<()> {
 
     let mut frame_num = 0;
     loop {
-        println!("state = {:?}", state);
+        //println!("state = {:?}", state);
 
         match state {
             State::Init => {
@@ -116,8 +118,6 @@ fn main() -> io::Result<()> {
                         eprintln!("error writing ploc to bytes");
                     }
                 }
-
-
                 
                 if let Some(ref mut stream) = citp_tcp_stream {
                     stream.read_message()?;
@@ -130,12 +130,21 @@ fn main() -> io::Result<()> {
                 state = State::Stream;
             }
             State::Stream => {
-                let num_lasers = 5;
-                for i in 0..num_lasers {
+                if let Some(ref mut stream) = citp_tcp_stream {
+                    stream.read_message()?;
+                    
+                    // let feed_list = send_laser_feed_list();
+                    // feed_list.write_to_bytes(&mut stream.writer).expect("Failed to write to server");
+                    // stream.writer.flush()?;
+                }
+
+                for i in 0..NUM_LASERS {
                     let laser_frame = stream_laser_frame(frame_num, i as u8);
+                    //eprintln!("laser_frame = {:#?}", laser_frame);
                     let mut frame_buf = [0u8; 65535];
                     laser_frame.write_to_bytes(&mut frame_buf[..]).expect("Failed to write to server");
                     let len = laser_frame.caex_header.citp_header.message_size as usize;
+                    //eprintln!("buf = {:?}", &frame_buf[..len]);
                     socket.send(&frame_buf[..len]).expect("Can't send buffer over UDP Socket");
                 }
                 
@@ -148,9 +157,9 @@ fn main() -> io::Result<()> {
                         let header = citp::protocol::Header::read_from_bytes(data).unwrap();
                         let header_size = header.size_bytes();
                         
-                        match &header.content_type.to_le_bytes() {
-                            _ => println!("Unrecognized UDP Header Content Type {}", header.content_type),
-                        }
+                        // match &header.content_type.to_le_bytes() {
+                        //     _ => println!("Unrecognized UDP Header Content Type {}", header.content_type),
+                        // }
                     }
                     Err(err) => {
                         println!("client: had a problem: {}", err);
@@ -158,7 +167,7 @@ fn main() -> io::Result<()> {
                 }
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(16));   
+        std::thread::sleep(std::time::Duration::from_millis(32));   
     }
 }
 
@@ -238,10 +247,10 @@ fn caex_laser_header(caex_message_size: usize, content_type: u32) -> caex::Heade
 
 const SOURCE_KEY: u32 = 1;
 
+
 fn send_laser_feed_list<'a>() -> caex::Message::<caex::LaserFeedList<'a>> {
-    let num_lasers = 5;
     let mut test_list = vec![];
-    for i in 0..num_lasers {
+    for i in 0..NUM_LASERS {
         let name = format!("nannou_laser {}", i);
         test_list.push(CString::new(name).unwrap());
     }
