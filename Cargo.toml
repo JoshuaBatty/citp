@@ -13,6 +13,7 @@ edition = "2021"
 [dependencies]
 byteorder = "1.2.3"
 ucs2 = "0.3.2"
+socket2 = "0.5.3"
 
 [[example]]
 name = "demo"
