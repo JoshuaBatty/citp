@@ -18,8 +18,8 @@ pub struct Header {
 }
 
 /// This message must be sent by Capture or a peer in response to any unknown message or any request that prompts a reply
-// which cannot be served. The CITP header RequestIndex and InResponseTo fields must be honored when sending this
-// message.
+/// which cannot be served. The CITP header RequestIndex and InResponseTo fields must be honored when sending this
+/// message.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub struct Nack {

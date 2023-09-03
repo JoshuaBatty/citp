@@ -58,7 +58,7 @@ fn main() -> io::Result<()> {
 
     let mut frame_num = 0;
     loop {
-        //println!("state = {:?}", state);
+        println!("state = {:?}", state);
 
         match state {
             State::Init => match socket.join_multicast_v4(&multi_addr, &inter) {
@@ -122,7 +122,7 @@ fn main() -> io::Result<()> {
                                     state = State::Request;
                                 }
                             }
-                            _ => println!("Unrecognized UDP Header Content Type"),
+                            _ => println!("Connect: Unrecognized UDP Header Content Type"),
                         }
                     }
                     Err(err) => {
@@ -132,10 +132,8 @@ fn main() -> io::Result<()> {
             }
             State::Request => {
                 //- Regularly send a CITP/PINF/PLoc message with no listening port.
-
                 // Return the number of bytes writte so we can take the correct amount of bytes from the slice
-                let ploc = send_peer_loction();
-
+                let ploc = send_peer_location();
                 let mut ploc_buf = [0u8; 65535];
                 match ploc.write_to_bytes(&mut ploc_buf[..]) {
                     Ok(_) => {
@@ -186,6 +184,8 @@ fn main() -> io::Result<()> {
                 state = State::Stream;
             }
             State::Stream => {
+                eprintln!("starting a new stream");
+
                 for i in 0..NUM_LASERS {
                     let laser_frame = stream_laser_frame(frame_num, i as u8);
                     let mut frame_buf = [0u8; 65535];
@@ -209,19 +209,29 @@ fn main() -> io::Result<()> {
                         let header_size = header.size_bytes();
 
                         match &header.content_type.to_le_bytes() {
-                            _ => println!("Unrecognized UDP Header Content Type {}", header.content_type),
+                            pinf::Header::CONTENT_TYPE => {
+                                eprintln!("PINF: header_len: {} | data_len = {:?}", header_size, data.len());
+                            }
+                            caex::Header::CONTENT_TYPE => {
+                                eprintln!("CAEX: header_len: {} | data_len = {:?}", header_size, data.len());
+                            }
+                            _ => println!("Stream: Unrecognized UDP Header {:#?}", header),
                         }
                     }
                     Err(err) => {
                         println!("client: had a problem: {}", err);
                     }
                 }
+                eprintln!("end of socket.recv_from");
 
                 if let Some(ref mut stream) = citp_tcp_stream {
+                    eprintln!("is there a tcp message?");
                     stream.read_message()?;
                 }
+                eprintln!("end of stream");
             }
         }
+        eprintln!("sleep for 40ms");
         // 25 fps
         std::thread::sleep(std::time::Duration::from_millis(40));
     }
@@ -259,7 +269,7 @@ fn pinf_header(pinf_message_size: usize, content_type: u32) -> pinf::Header {
     }
 }
 
-fn send_peer_loction() -> pinf::Message<pinf::PLoc> {
+fn send_peer_location() -> pinf::Message<pinf::PLoc> {
     let ploc = pinf::PLoc {
         listening_tcp_port: 0,
         kind: CString::new("LightingConsole").expect("CString::new failed"),

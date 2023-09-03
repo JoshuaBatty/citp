@@ -32,11 +32,17 @@ impl CitpTcp {
 
     /// Read a received message from the TcpStream
     pub fn read_message(&mut self) -> io::Result<()> {
+        
         // let mut line = String::new();
         // // Use `BufRead::read_line()` to read a line from the TcpStream
         // self.reader.read_line(&mut line)?;
         // line.pop(); // Remove the trailing "\n"
         // Ok(line)
+
+        eprintln!("TCP: read_message()");
+        // let len = self.reader.buffer().len();
+        // eprintln!("TCP: len = {}", len);
+        // self.reader.consume(len);
 
         // Read current current data in the TcpStream
         let mut received: Vec<u8> = self.reader.fill_buf()?.to_vec();
@@ -44,14 +50,14 @@ impl CitpTcp {
         // Do some processing or validation to make sure the whole line is present?
         // ...
 
-        println!("received len = {}", received.len());
+        println!("TCP: start of new message: received len = {}", received.len());
 
         loop {
             let mut message_size = 0;
             let header = citp::protocol::Header::read_from_bytes(&received[..]).unwrap();
             let header_size = header.size_bytes();
-            //println!("header = {:#?}", header);
-            //println!("header_size = {:#?}", header_size);
+            println!("header = {:#?}", header);
+            println!("header_size = {:#?}", header_size);
 
             let read_offset = header_size + super::CONTENT_TYPE_LEN;
             let message_content_type = layer_two_content_type(&received, header_size).to_le_bytes();
@@ -108,6 +114,7 @@ impl CitpTcp {
                             println!("EnterShow");
                             let enter_show =
                                 caex::EnterShow::read_from_bytes(&received[read_offset..]).unwrap();
+                            message_size = enter_show.size_bytes();
                             println!("enter_show = {:#?}", enter_show);
                         }
                         caex::LeaveShow::CONTENT_TYPE => {
@@ -120,6 +127,7 @@ impl CitpTcp {
                             println!("FixtureList");
                             let fixture_list =
                                 caex::FixtureList::read_from_bytes(&received[read_offset..]).unwrap();
+                            message_size = fixture_list.size_bytes();
                             println!("fixture_list = {:#?}", fixture_list);
                         }
                         caex::FixtureRemove::CONTENT_TYPE => {
@@ -136,18 +144,19 @@ impl CitpTcp {
                         "Un recognized TCP Header Content Type {}",
                         header.content_type
                     );
+                    eprintln!("Un recognized TCP Header: {:#?}", header);
                     break;
                 }
             }
 
-            println!("message_size = {:#?}", message_size);
-
-            println!("received len {}", received.len());
+            println!("TCP: message_size = {:#?} | received_len {}", message_size, received.len());
 
             if received.len() <= header.message_size as usize {
+                eprintln!("TCP: Break!");
                 break;
             }
 
+            eprintln!("TCP: Draining {} bytes", read_offset + message_size);
             received = received.drain(read_offset + message_size..).collect();
             //let header = citp::protocol::Header::read_from_bytes(&message[..]).unwrap();
             //println!("header 2 = {:#?}", header);
@@ -155,6 +164,7 @@ impl CitpTcp {
 
         // Mark the bytes read as consumed so the buffer will not return them in a subsequent read
         self.reader.consume(received.len());
+        eprintln!("TCP: Consume {} bytes", received.len());
 
         Ok(())
 
