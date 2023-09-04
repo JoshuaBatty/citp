@@ -17,6 +17,8 @@ use std::{
     mem::MaybeUninit,
 };
 
+use crate::citp_tcp::CaexState;
+
 pub const CITP_HEADER_LEN: usize = 20;
 pub const CONTENT_TYPE_LEN: usize = 4;
 
@@ -34,11 +36,9 @@ fn main() -> io::Result<()> {
     let mut state = State::Init;
 
     let multicast_port = citp::protocol::pinf::MULTICAST_PORT;
-    let domain = Domain::IPV4;
-    let socket_type = Type::DGRAM;
-    let protocol = Protocol::UDP;
-    let socket = Socket::new(domain, socket_type, Some(protocol))?;
+    let socket = Socket::new( Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
     let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), multicast_port);
     socket.bind(&address.into())?;
 
@@ -81,12 +81,10 @@ fn main() -> io::Result<()> {
                                 if let pinf::PLoc::CONTENT_TYPE =
                                     &layer_two_content_type(&data, header_size).to_le_bytes()
                                 {
-                                    //println!("PINF PLoc");
-
                                     let ploc = citp::protocol::pinf::PLoc::read_from_bytes(
                                         &data[header_size + CONTENT_TYPE_LEN..],
                                     )?;
-                                    //println!("ploc = {:#?}", ploc);
+                                    println!("PINF PLoc = {:#?}", ploc);
 
                                     let name = ploc.name.to_str().unwrap().to_owned();
                                     let tcp_addr = format!(
@@ -148,19 +146,42 @@ fn main() -> io::Result<()> {
                 }
 
                 if let Some(ref mut stream) = citp_tcp_stream {
-                    stream.read_message()?;
+                    let caex_state = stream.read_message()?;
 
-                    let enter_show = enter_show("MindBuffer_Lattice");
-                    enter_show
-                        .write_to_bytes(&mut stream.writer)
-                        .expect("Failed to write to server");
-                    stream.writer.flush()?;
+                    if let Some(CaexState::EnterShow) = caex_state {
+                        println!("WE ENTERED THE SHOW!");
 
-                    let feed_list = send_laser_feed_list();
-                    feed_list
-                        .write_to_bytes(&mut stream.writer)
-                        .expect("Failed to write to server");
-                    stream.writer.flush()?;
+                        let enter_show = enter_show("kortex-test-suite");
+                        enter_show
+                            .write_to_bytes(&mut stream.writer)
+                            .expect("Failed to write to server");
+                        stream.writer.flush()?;
+                    }
+                    
+                    if let Some(CaexState::GetLaserFeedList) = caex_state {
+                        println!("WE GOT A LASER FEED LIST REQUEST!");
+
+                        let feed_list = send_laser_feed_list();
+                        feed_list
+                            .write_to_bytes(&mut stream.writer)
+                            .expect("Failed to write to server");
+                        stream.writer.flush()?;
+
+                    }
+
+                    if let Some(CaexState::FixtureListRequest) = caex_state {
+                        println!("WE GOT A FIXTURE LIST REQUEST!");
+
+                        let fixture_list = new_fixture_list();
+                        fixture_list
+                            .write_to_bytes(&mut stream.writer)
+                            .expect("Failed to write to server");
+                        stream.writer.flush()?;
+
+                        state = State::Stream;
+
+                    }
+                    
 
                     // TODO: Get the fixture list working after lasers work
                     // let fixture_list_req = caex_header(0, caex::FixtureListRequest::CONTENT_TYPE);
@@ -168,20 +189,15 @@ fn main() -> io::Result<()> {
                     //     .write_to_bytes(&mut stream.writer)
                     //     .expect("Failed to write to server");
 
-                    // let fixture_list = new_fixture_list();
-                    // fixture_list
-                    //     .write_to_bytes(&mut stream.writer)
-                    //     .expect("Failed to write to server");
-                    // stream.writer.flush()?;
 
                     // let fixture_remove = remove_fixtures();
                     // fixture_remove
                     //     .write_to_bytes(&mut stream.writer)
                     //     .expect("Failed to write to server");
-                    stream.writer.flush()?;
+                    //stream.writer.flush()?;
                 }
 
-                state = State::Stream;
+                // state = State::Stream;
             }
             State::Stream => {
                 eprintln!("starting a new stream");
@@ -201,13 +217,18 @@ fn main() -> io::Result<()> {
 
                 frame_num += 1;
 
+                eprintln!("buffer size = {}", buf.len());
                 match socket.recv_from(&mut buf) {
                     Ok((len, remote_addr)) => {
+                        dbg!();
                         // - Read the full base **Header** first.
                         let data = to_data(&mut buf, len);
                         let header = citp::protocol::Header::read_from_bytes(data).unwrap();
                         let header_size = header.size_bytes();
 
+                        eprintln!("header = {:#?}", header);
+
+                        // TODO, work out what data is actually being sent here.
                         match &header.content_type.to_le_bytes() {
                             pinf::Header::CONTENT_TYPE => {
                                 eprintln!("PINF: header_len: {} | data_len = {:?}", header_size, data.len());
@@ -219,16 +240,17 @@ fn main() -> io::Result<()> {
                         }
                     }
                     Err(err) => {
+                        dbg!();
                         println!("client: had a problem: {}", err);
                     }
                 }
                 eprintln!("end of socket.recv_from");
 
-                if let Some(ref mut stream) = citp_tcp_stream {
-                    eprintln!("is there a tcp message?");
-                    stream.read_message()?;
-                }
-                eprintln!("end of stream");
+                // if let Some(ref mut stream) = citp_tcp_stream {
+                //     eprintln!("is there a tcp message?");
+                //     stream.read_message()?;
+                // }
+                // eprintln!("end of stream");
             }
         }
         eprintln!("sleep for 40ms");
@@ -421,9 +443,9 @@ fn remove_fixtures<'a>() -> caex::Message<caex::FixtureRemove<'a>> {
 
 fn new_fixture_list<'a>() -> caex::Message<caex::FixtureList<'a>> {
     let fixture_list = caex::FixtureList {
-        message_type: caex::FixtureListMessageType::NewFixture,
-        fixture_count: 1,
-        fixtures: Cow::Owned(vec![clay_paky_sharpy()]),
+        message_type: caex::FixtureListMessageType::ExistingPatchList,//caex::FixtureListMessageType::NewFixture,
+        fixture_count: 0,
+        fixtures: Cow::Owned(vec![]),//clay_paky_sharpy()]),
     };
     caex::Message {
         caex_header: caex_header(fixture_list.size_bytes(), caex::FixtureList::CONTENT_TYPE),
