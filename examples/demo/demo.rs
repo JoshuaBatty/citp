@@ -2,19 +2,16 @@ extern crate citp;
 extern crate socket2;
 mod citp_tcp;
 
-use citp::protocol::{
-    WriteToBytes, SizeBytes, ReadFromBytes,
-    pinf, caex, sdmx,
-};
-use citp_tcp::CitpTcp;
 use citp::protocol::Ucs2;
-use socket2::{Socket, Domain, Type, Protocol};
+use citp::protocol::{caex, pinf, sdmx, ReadFromBytes, SizeBytes, WriteToBytes};
+use citp_tcp::CitpTcp;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     borrow::Cow,
     ffi::CString,
-    net::{TcpStream, SocketAddrV4, Ipv4Addr},
     io::{self, Write},
     mem::MaybeUninit,
+    net::{Ipv4Addr, SocketAddrV4, TcpStream},
 };
 
 use crate::citp_tcp::CaexState;
@@ -36,13 +33,13 @@ fn main() -> io::Result<()> {
     let mut state = State::Init;
 
     let multicast_port = citp::protocol::pinf::MULTICAST_PORT;
-    let socket = Socket::new( Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
     socket.set_nonblocking(true)?;
     let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), multicast_port);
     socket.bind(&address.into())?;
 
-    let mut buf: [MaybeUninit<u8>; 65535] = unsafe { MaybeUninit::uninit().assume_init() };  
+    let mut buf: [MaybeUninit<u8>; 65535] = unsafe { MaybeUninit::uninit().assume_init() };
 
     let addr = citp::protocol::pinf::OLD_MULTICAST_ADDR;
     let multi_addr = Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]);
@@ -53,8 +50,12 @@ fn main() -> io::Result<()> {
     let header_size = std::mem::size_of::<citp::protocol::Header>();
     println!("HEADER SIZE = {}", header_size);
 
-    let fixture_list_message_type_size = std::mem::size_of::<citp::protocol::caex::FixtureListMessageType>();
-    println!("FixtureListMessageType SIZE = {}", fixture_list_message_type_size);
+    let fixture_list_message_type_size =
+        std::mem::size_of::<citp::protocol::caex::FixtureListMessageType>();
+    println!(
+        "FixtureListMessageType SIZE = {}",
+        fixture_list_message_type_size
+    );
 
     let mut frame_num = 0;
     loop {
@@ -157,7 +158,7 @@ fn main() -> io::Result<()> {
                             .expect("Failed to write to server");
                         stream.writer.flush()?;
                     }
-                    
+
                     if let Some(CaexState::GetLaserFeedList) = caex_state {
                         println!("WE GOT A LASER FEED LIST REQUEST!");
 
@@ -166,7 +167,6 @@ fn main() -> io::Result<()> {
                             .write_to_bytes(&mut stream.writer)
                             .expect("Failed to write to server");
                         stream.writer.flush()?;
-
                     }
 
                     if let Some(CaexState::FixtureListRequest) = caex_state {
@@ -179,16 +179,13 @@ fn main() -> io::Result<()> {
                         stream.writer.flush()?;
 
                         state = State::Stream;
-
                     }
-                    
 
                     // TODO: Get the fixture list working after lasers work
                     // let fixture_list_req = caex_header(0, caex::FixtureListRequest::CONTENT_TYPE);
                     // fixture_list_req
                     //     .write_to_bytes(&mut stream.writer)
                     //     .expect("Failed to write to server");
-
 
                     // let fixture_remove = remove_fixtures();
                     // fixture_remove
@@ -231,10 +228,18 @@ fn main() -> io::Result<()> {
                         // TODO, work out what data is actually being sent here.
                         match &header.content_type.to_le_bytes() {
                             pinf::Header::CONTENT_TYPE => {
-                                eprintln!("PINF: header_len: {} | data_len = {:?}", header_size, data.len());
+                                eprintln!(
+                                    "PINF: header_len: {} | data_len = {:?}",
+                                    header_size,
+                                    data.len()
+                                );
                             }
                             caex::Header::CONTENT_TYPE => {
-                                eprintln!("CAEX: header_len: {} | data_len = {:?}", header_size, data.len());
+                                eprintln!(
+                                    "CAEX: header_len: {} | data_len = {:?}",
+                                    header_size,
+                                    data.len()
+                                );
                             }
                             _ => println!("Stream: Unrecognized UDP Header {:#?}", header),
                         }
@@ -328,10 +333,7 @@ fn enter_show(project_name: &str) -> caex::Message<caex::EnterShow> {
     };
 
     caex::Message {
-        caex_header: caex_header(
-            enter_show.size_bytes(),
-            caex::EnterShow::CONTENT_TYPE,
-        ),
+        caex_header: caex_header(enter_show.size_bytes(), caex::EnterShow::CONTENT_TYPE),
         message: enter_show,
     }
 }
@@ -436,16 +438,19 @@ fn remove_fixtures<'a>() -> caex::Message<caex::FixtureRemove<'a>> {
         fixture_identifiers: Cow::Owned(vec![4294967295]),
     };
     caex::Message {
-        caex_header: caex_header(fixture_remove.size_bytes(), caex::FixtureRemove::CONTENT_TYPE),
+        caex_header: caex_header(
+            fixture_remove.size_bytes(),
+            caex::FixtureRemove::CONTENT_TYPE,
+        ),
         message: fixture_remove,
     }
 }
 
 fn new_fixture_list<'a>() -> caex::Message<caex::FixtureList<'a>> {
     let fixture_list = caex::FixtureList {
-        message_type: caex::FixtureListMessageType::ExistingPatchList,//caex::FixtureListMessageType::NewFixture,
+        message_type: caex::FixtureListMessageType::ExistingPatchList, //caex::FixtureListMessageType::NewFixture,
         fixture_count: 0,
-        fixtures: Cow::Owned(vec![]),//clay_paky_sharpy()]),
+        fixtures: Cow::Owned(vec![]), //clay_paky_sharpy()]),
     };
     caex::Message {
         caex_header: caex_header(fixture_list.size_bytes(), caex::FixtureList::CONTENT_TYPE),
@@ -467,66 +472,21 @@ fn clay_paky_sharpy<'a>() -> caex::Fixture<'a> {
                 identifier_type: caex::IdentifierType::AtlaBaseFixtureId,
                 data_size: 16,
                 data: Cow::Owned(vec![
-                    142,
-                    41,
-                    141,
-                    125,
-                    86,
-                    235,
-                    66,
-                    114,
-                    186,
-                    240,
-                    213,
-                    86,
-                    144,
-                    181,
-                    3,
-                    117,
+                    142, 41, 141, 125, 86, 235, 66, 114, 186, 240, 213, 86, 144, 181, 3, 117,
                 ]),
             },
             caex::Identifier {
                 identifier_type: caex::IdentifierType::AtlaBaseModeId,
                 data_size: 16,
                 data: Cow::Owned(vec![
-                    181,
-                    242,
-                    192,
-                    212,
-                    241,
-                    59,
-                    75,
-                    48,
-                    143,
-                    105,
-                    179,
-                    45,
-                    2,
-                    217,
-                    115,
-                    255,
+                    181, 242, 192, 212, 241, 59, 75, 48, 143, 105, 179, 45, 2, 217, 115, 255,
                 ]),
             },
             caex::Identifier {
                 identifier_type: caex::IdentifierType::CaptureInstanceId,
                 data_size: 16,
                 data: Cow::Owned(vec![
-                    170,
-                    237,
-                    211,
-                    26,
-                    186,
-                    184,
-                    68,
-                    150,
-                    139,
-                    151,
-                    42,
-                    96,
-                    37,
-                    96,
-                    242,
-                    3,
+                    170, 237, 211, 26, 186, 184, 68, 150, 139, 151, 42, 96, 37, 96, 242, 3,
                 ]),
             },
         ]),
@@ -538,16 +498,8 @@ fn clay_paky_sharpy<'a>() -> caex::Fixture<'a> {
             channel: 0,
             circuit: Ucs2::from_str("").unwrap(),
             note: Ucs2::from_str("").unwrap(),
-            position: [
-                -0.6716977,
-                -0.33584884,
-                0.0,
-            ],
-            angles: [
-                -0.0,
-                0.0,
-                0.0,
-            ],
-        },       
+            position: [-0.6716977, -0.33584884, 0.0],
+            angles: [-0.0, 0.0, 0.0],
+        },
     }
 }

@@ -46,23 +46,12 @@ impl CitpTcp {
 
     /// Read a received message from the TcpStream
     pub fn read_message(&mut self) -> io::Result<Option<CaexState>> {
-
         let mut caex_state: Option<CaexState> = None;
-        
-        // let mut line = String::new();
-        // // Use `BufRead::read_line()` to read a line from the TcpStream
-        // self.reader.read_line(&mut line)?;
-        // line.pop(); // Remove the trailing "\n"
-        // Ok(line)
 
         eprintln!("TCP: read_message()");
-        let len = self.reader.buffer().len();
-        eprintln!("TCP: len = {}", len);
-        // self.reader.consume(len);
+        eprintln!("TCP: len = {}", self.reader.buffer().len());
 
         // Read current current data in the TcpStream
-        //let mut received: Vec<u8> = self.reader.fill_buf()?.to_vec();
-
         let mut received: Vec<u8> = match self.reader.buffer().is_empty() {
             true => {
                 eprintln!("TCP: buffer is empty");
@@ -77,14 +66,15 @@ impl CitpTcp {
         // Do some processing or validation to make sure the whole line is present?
         // ...
 
-        println!("TCP: start of new message: received len = {}", received.len());
+        println!(
+            "TCP: start of new message: received len = {}",
+            received.len()
+        );
         let mut total_received_bytes_processed = 0;
 
         while !received.is_empty() {
-            let mut message_size = 0;
             let header = citp::protocol::Header::read_from_bytes(&received[..]).unwrap();
             let header_size = header.size_bytes();
-            let content_size = header.message_size as usize - header_size - super::CONTENT_TYPE_LEN;
             println!("header = {:#?}", header);
             println!("header_size = {:#?}", header_size);
 
@@ -98,14 +88,12 @@ impl CitpTcp {
                         pinf::PNam::CONTENT_TYPE => {
                             let pnam =
                                 pinf::PNam::read_from_bytes(&received[read_offset..]).unwrap();
-                            println!("pnam = {:#?}", pnam);
-                            message_size = pnam.size_bytes();
+                            println!("PNam = {:#?}", pnam);
                         }
                         pinf::PLoc::CONTENT_TYPE => {
                             let ploc =
                                 pinf::PLoc::read_from_bytes(&received[read_offset..]).unwrap();
-                            println!("ploc = {:#?}", ploc);
-                            message_size = ploc.size_bytes();
+                            println!("PLoc = {:#?}", ploc);
                         }
                         _ => (),
                     }
@@ -113,67 +101,56 @@ impl CitpTcp {
                 sdmx::Header::CONTENT_TYPE => {
                     if let sdmx::Capa::CONTENT_TYPE = &message_content_type {
                         let capa = sdmx::Capa::read_from_bytes(&received[read_offset..]).unwrap();
-                        //println!("capa = {:#?}", capa);
-                        message_size = capa.size_bytes();
+                        println!("sdmx Capa = {:#?}", capa);
                     }
                 }
                 caex::Header::CONTENT_TYPE => {
                     match layer_two_content_type(&received, header_size) {
                         caex::Nack::CONTENT_TYPE => {
-                            println!("NACK Message recieved!");
+                            println!("TCP: NACK Message recieved!");
                         }
                         caex::GetLaserFeedList::CONTENT_TYPE => {
-                            println!("GetLaserFeedList");
-                            // message_size = 0;
-
+                            println!("TCP: GetLaserFeedList");
                             caex_state = Some(CaexState::GetLaserFeedList);
                         }
                         caex::LaserFeedList::CONTENT_TYPE => {
-                            println!("LaserFeedList");
+                            println!("TCP: LaserFeedList");
                         }
                         caex::LaserFeedControl::CONTENT_TYPE => {
                             let feed_control =
                                 caex::LaserFeedControl::read_from_bytes(&received[read_offset..])
                                     .unwrap();
-                            println!("feed_control = {:#?}", feed_control);
-                            message_size = feed_control.size_bytes();
-
+                            println!("TCP: LaserFeedControl = {:#?}", feed_control);
                             caex_state = Some(CaexState::LaserFeedControl);
                         }
                         caex::LaserFeedFrame::CONTENT_TYPE => {
-                            println!("LaserFeedFrame");
+                            println!("TCP: LaserFeedFrame");
                         }
                         caex::EnterShow::CONTENT_TYPE => {
-                            println!("EnterShow");
                             let enter_show =
                                 caex::EnterShow::read_from_bytes(&received[read_offset..]).unwrap();
-                            message_size = enter_show.size_bytes();
-                            println!("enter_show = {:#?}", enter_show);
-
+                            println!("TCP: EnterShow = {:#?}", enter_show);
                             caex_state = Some(CaexState::EnterShow);
                         }
                         caex::LeaveShow::CONTENT_TYPE => {
-                            println!("LeaveShow");
-
+                            println!("TCP: LeaveShow");
                             caex_state = Some(CaexState::LeaveShow);
                         }
                         caex::FixtureListRequest::CONTENT_TYPE => {
-                            println!("FixtureListRequest");
-
+                            println!("TCP: FixtureListRequest");
                             caex_state = Some(CaexState::FixtureListRequest);
                         }
                         caex::FixtureList::CONTENT_TYPE => {
-                            println!("FixtureList");
                             let fixture_list =
-                                caex::FixtureList::read_from_bytes(&received[read_offset..]).unwrap();
-                            message_size = fixture_list.size_bytes();
-                            println!("fixture_list = {:#?}", fixture_list);
+                                caex::FixtureList::read_from_bytes(&received[read_offset..])
+                                    .unwrap();
+                            println!("TCP: FixtureList = {:#?}", fixture_list);
                         }
                         caex::FixtureRemove::CONTENT_TYPE => {
-                            println!("FixtureRemove");
+                            println!("TCP: FixtureRemove");
                         }
                         caex::FixtureConsoleStatus::CONTENT_TYPE => {
-                            println!("FixtureConsoleStatus");
+                            println!("TCP: FixtureConsoleStatus");
                         }
                         _ => (),
                     }
@@ -188,7 +165,11 @@ impl CitpTcp {
                 }
             }
 
-            println!("TCP: header.message_size = {:#?} | received_len {}", header.message_size, received.len());
+            println!(
+                "TCP: header.message_size = {:#?} | received_len {}",
+                header.message_size,
+                received.len()
+            );
 
             // if received.len() <= header.message_size as usize {
             //     eprintln!("TCP: Break!");
@@ -199,12 +180,12 @@ impl CitpTcp {
             total_received_bytes_processed += header.message_size as usize;
             received = received.drain(header.message_size as usize..).collect();
             break; // Try forcing only one message at a time.
-            //let header = citp::protocol::Header::read_from_bytes(&message[..]).unwrap();
-            //println!("header 2 = {:#?}", header);
+                   //let header = citp::protocol::Header::read_from_bytes(&message[..]).unwrap();
+                   //println!("header 2 = {:#?}", header);
         }
 
         // Mark the bytes read as consumed so the buffer will not return them in a subsequent read
-        self.reader.consume(total_received_bytes_processed);//received.len());
+        self.reader.consume(total_received_bytes_processed); //received.len());
         eprintln!("TCP: Consume {} bytes", received.len());
 
         Ok(caex_state)

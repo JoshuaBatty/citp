@@ -482,7 +482,7 @@ impl WriteToBytes for FixtureData {
 
 impl<'a> WriteToBytes for FixtureRemove<'a> {
     fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_u16::<LE>(self.fixture_count)?;        
+        writer.write_u16::<LE>(self.fixture_count)?;
         for id in self.fixture_identifiers.iter() {
             writer.write_u32::<LE>(*id)?;
         }
@@ -636,13 +636,12 @@ impl<'a> ReadFromBytes for FixtureRemove<'a> {
         for _ in 0..fixture_count {
             fixture_identifiers.push(reader.read_u32::<LE>()?);
         }
-        Ok(FixtureRemove { 
+        Ok(FixtureRemove {
             fixture_count,
             fixture_identifiers: Cow::Owned(fixture_identifiers),
-        }) 
+        })
     }
 }
-
 
 impl SizeBytes for EnterShow {
     fn size_bytes(&self) -> usize {
@@ -656,9 +655,7 @@ impl<'a> SizeBytes for FixtureList<'a> {
         for fixture in self.fixtures.iter() {
             fixtures_size += fixture.size_bytes();
         }
-        mem::size_of::<u8>()
-        + mem::size_of::<u16>()
-        + fixtures_size
+        mem::size_of::<u8>() + mem::size_of::<u16>() + fixtures_size
     }
 }
 
@@ -668,9 +665,7 @@ impl<'a> SizeBytes for Identifier<'a> {
         for _ in self.data.iter() {
             data_size += mem::size_of::<u8>();
         }
-        mem::size_of::<u8>()
-        + mem::size_of::<u16>()
-        + data_size
+        mem::size_of::<u8>() + mem::size_of::<u16>() + data_size
     }
 }
 
@@ -682,28 +677,28 @@ impl<'a> SizeBytes for Fixture<'a> {
         }
 
         mem::size_of::<u32>()
-        + self.manufacturer_name.size_bytes()
-        + self.fixture_name.size_bytes()
-        + self.mode_name.size_bytes()
-        + mem::size_of::<u16>()
-        + mem::size_of::<u8>()
-        + mem::size_of::<u8>()
-        + identifiers_size
-        + self.data.size_bytes()
+            + self.manufacturer_name.size_bytes()
+            + self.fixture_name.size_bytes()
+            + self.mode_name.size_bytes()
+            + mem::size_of::<u16>()
+            + mem::size_of::<u8>()
+            + mem::size_of::<u8>()
+            + identifiers_size
+            + self.data.size_bytes()
     }
 }
 
 impl SizeBytes for FixtureData {
     fn size_bytes(&self) -> usize {
         mem::size_of::<u8>()
-        + mem::size_of::<u8>()
-        + mem::size_of::<u16>()
-        + self.unit.size_bytes()
-        + mem::size_of::<u16>()
-        + self.circuit.size_bytes()
-        + self.note.size_bytes()
-        + (mem::size_of::<f32>() * 3)
-        + (mem::size_of::<f32>() * 3)
+            + mem::size_of::<u8>()
+            + mem::size_of::<u16>()
+            + self.unit.size_bytes()
+            + mem::size_of::<u16>()
+            + self.circuit.size_bytes()
+            + self.note.size_bytes()
+            + (mem::size_of::<f32>() * 3)
+            + (mem::size_of::<f32>() * 3)
     }
 }
 
@@ -713,12 +708,10 @@ impl<'a> SizeBytes for FixtureRemove<'a> {
         for _ in 0..self.fixture_count {
             fixture_ids_size += mem::size_of::<u32>();
         }
-        
-        mem::size_of::<u16>()
-        + fixture_ids_size
+
+        mem::size_of::<u16>() + fixture_ids_size
     }
 }
-
 
 impl<'a> SizeBytes for LaserFeedList<'a> {
     fn size_bytes(&self) -> usize {
