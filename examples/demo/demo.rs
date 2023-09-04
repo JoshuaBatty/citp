@@ -1,10 +1,14 @@
+extern crate ansi_term;
 extern crate citp;
 extern crate socket2;
 mod citp_tcp;
+#[macro_use]
+pub mod dbg;
 
 use citp::protocol::Ucs2;
 use citp::protocol::{caex, pinf, sdmx, ReadFromBytes, SizeBytes, WriteToBytes};
 use citp_tcp::CitpTcp;
+use dbg::*;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     borrow::Cow,
@@ -29,8 +33,12 @@ enum State {
     Stream,
 }
 
+
 fn main() -> io::Result<()> {
     let mut state = State::Init;
+    let mut citp_tcp_stream: Option<CitpTcp> = None;
+    let mut buf: [MaybeUninit<u8>; 65535] = unsafe { MaybeUninit::uninit().assume_init() };
+
 
     let multicast_port = citp::protocol::pinf::MULTICAST_PORT;
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -39,23 +47,13 @@ fn main() -> io::Result<()> {
     let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), multicast_port);
     socket.bind(&address.into())?;
 
-    let mut buf: [MaybeUninit<u8>; 65535] = unsafe { MaybeUninit::uninit().assume_init() };
-
     let addr = citp::protocol::pinf::OLD_MULTICAST_ADDR;
     let multi_addr = Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]);
     let inter = Ipv4Addr::new(0, 0, 0, 0);
 
-    let mut citp_tcp_stream: Option<CitpTcp> = None;
 
     let header_size = std::mem::size_of::<citp::protocol::Header>();
-    println!("HEADER SIZE = {}", header_size);
-
-    let fixture_list_message_type_size =
-        std::mem::size_of::<citp::protocol::caex::FixtureListMessageType>();
-    println!(
-        "FixtureListMessageType SIZE = {}",
-        fixture_list_message_type_size
-    );
+    println_green!("HEADER SIZE = {}", header_size);
 
     let mut frame_num = 0;
     loop {
@@ -85,7 +83,7 @@ fn main() -> io::Result<()> {
                                     let ploc = citp::protocol::pinf::PLoc::read_from_bytes(
                                         &data[header_size + CONTENT_TYPE_LEN..],
                                     )?;
-                                    println!("PINF PLoc = {:#?}", ploc);
+                                    println_yellow!("PINF PLoc = {:#?}", ploc);
 
                                     let name = ploc.name.to_str().unwrap().to_owned();
                                     let tcp_addr = format!(
@@ -93,7 +91,6 @@ fn main() -> io::Result<()> {
                                         extract_ip_address(&name),
                                         ploc.listening_tcp_port
                                     );
-                                    //println!("ip_address = {}", tcp_addr);
 
                                     //Use the remote_addr to connect to the socket
                                     // only if it isn't already connected
@@ -116,16 +113,16 @@ fn main() -> io::Result<()> {
                                     // Tell TCP to send the buffered data on the wire
                                     citp_tcp.writer.flush()?;
                                     citp_tcp_stream = Some(citp_tcp);
-                                    println!("WE MADE A SUCCESFUL TCP CONNECTION!");
+                                    println_green!("WE MADE A SUCCESFUL TCP CONNECTION!");
 
                                     state = State::Request;
                                 }
                             }
-                            _ => println!("Connect: Unrecognized UDP Header Content Type"),
+                            _ => println_red!("Connect: Unrecognized UDP Header Content Type"),
                         }
                     }
                     Err(err) => {
-                        println!("client: had a problem: {}", err);
+                        println_red!("client: had a problem: {}", err);
                     }
                 }
             }
@@ -142,7 +139,7 @@ fn main() -> io::Result<()> {
                             .expect("Can't send buffer over UDP Socket");
                     }
                     Err(_) => {
-                        eprintln!("error writing ploc to bytes");
+                        println_red!("error writing ploc to bytes");
                     }
                 }
 
@@ -150,7 +147,7 @@ fn main() -> io::Result<()> {
                     let caex_state = stream.read_message()?;
 
                     if let Some(CaexState::EnterShow) = caex_state {
-                        println!("WE ENTERED THE SHOW!");
+                        println_green!("WE ENTERED THE SHOW!");
 
                         let enter_show = enter_show("kortex-test-suite");
                         enter_show
@@ -160,7 +157,7 @@ fn main() -> io::Result<()> {
                     }
 
                     if let Some(CaexState::GetLaserFeedList) = caex_state {
-                        println!("WE GOT A LASER FEED LIST REQUEST!");
+                        println_green!("WE GOT A LASER FEED LIST REQUEST!");
 
                         let feed_list = send_laser_feed_list();
                         feed_list
@@ -170,7 +167,7 @@ fn main() -> io::Result<()> {
                     }
 
                     if let Some(CaexState::FixtureListRequest) = caex_state {
-                        println!("WE GOT A FIXTURE LIST REQUEST!");
+                        println_green!("WE GOT A FIXTURE LIST REQUEST!");
 
                         let fixture_list = new_fixture_list();
                         fixture_list
@@ -209,44 +206,32 @@ fn main() -> io::Result<()> {
                     socket
                         .send(&frame_buf[..len])
                         .expect("Can't send buffer over UDP Socket");
-                    eprintln!("SENT LASER FRAME");
+                    println_green!("SENT LASER FRAME");
                 }
-
                 frame_num += 1;
 
-                eprintln!("buffer size = {}", buf.len());
                 match socket.recv_from(&mut buf) {
                     Ok((len, remote_addr)) => {
-                        dbg!();
                         // - Read the full base **Header** first.
                         let data = to_data(&mut buf, len);
                         let header = citp::protocol::Header::read_from_bytes(data).unwrap();
                         let header_size = header.size_bytes();
 
-                        eprintln!("header = {:#?}", header);
+                        eprintln!("UDP header = {:#?}", header);
 
                         // TODO, work out what data is actually being sent here.
                         match &header.content_type.to_le_bytes() {
                             pinf::Header::CONTENT_TYPE => {
-                                eprintln!(
-                                    "PINF: header_len: {} | data_len = {:?}",
-                                    header_size,
-                                    data.len()
-                                );
+                                println_blue!("PINF: header_len: {} | data_len = {:?}",header_size,data.len());
                             }
                             caex::Header::CONTENT_TYPE => {
-                                eprintln!(
-                                    "CAEX: header_len: {} | data_len = {:?}",
-                                    header_size,
-                                    data.len()
-                                );
+                                println_blue!("CAEX: header_len: {} | data_len = {:?}", header_size, data.len());
                             }
-                            _ => println!("Stream: Unrecognized UDP Header {:#?}", header),
+                            _ => println_red!("Stream: Unrecognized UDP Header {:#?}", header),
                         }
                     }
                     Err(err) => {
-                        dbg!();
-                        println!("client: had a problem: {}", err);
+                        println_red!("client: had a problem: {}", err);
                     }
                 }
                 eprintln!("end of socket.recv_from");
