@@ -5,24 +5,20 @@ mod citp_tcp;
 #[macro_use]
 pub mod dbg;
 
-use citp::protocol::Ucs2;
-use citp::protocol::{caex, pinf, sdmx, ReadFromBytes, SizeBytes, WriteToBytes};
+use crate::citp_tcp::CaexState;
+use citp::protocol::{caex, pinf, sdmx, Ucs2, ReadFromBytes, SizeBytes, WriteToBytes};
 use citp_tcp::CitpTcp;
-use dbg::*;
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Protocol, Socket, Type, SockAddr};
 use std::{
     borrow::Cow,
     ffi::CString,
     io::{self, Write},
     mem::MaybeUninit,
-    net::{Ipv4Addr, SocketAddrV4, TcpStream},
+    net::{Ipv4Addr, SocketAddrV4, TcpStream, SocketAddr, IpAddr},
 };
-
-use crate::citp_tcp::CaexState;
 
 pub const CITP_HEADER_LEN: usize = 20;
 pub const CONTENT_TYPE_LEN: usize = 4;
-
 pub const NUM_LASERS: i32 = 1;
 
 #[derive(Debug)]
@@ -38,34 +34,37 @@ fn main() -> io::Result<()> {
     let mut state = State::Init;
     let mut citp_tcp_stream: Option<CitpTcp> = None;
     let mut buf: [MaybeUninit<u8>; 65535] = unsafe { MaybeUninit::uninit().assume_init() };
+    let mut frame_num = 0;
+    let source_key = 1;//rand::random::<u32>();
 
-
-    let multicast_port = citp::protocol::pinf::MULTICAST_PORT;
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
     socket.set_nonblocking(true)?;
-    let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), multicast_port);
+    // socket.set_multicast_loop_v4(false)?;
+    // socket.set_multicast_ttl_v4(2)?; // or another appropriate value
+
+    
+    let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), citp::protocol::pinf::MULTICAST_PORT);
     socket.bind(&address.into())?;
 
     let addr = citp::protocol::pinf::OLD_MULTICAST_ADDR;
     let multi_addr = Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]);
     let inter = Ipv4Addr::new(0, 0, 0, 0);
 
+    let multicast_address = Ipv4Addr::new(224, 0, 0, 180);
+    let destination = SocketAddr::new(IpAddr::V4(multicast_address), citp::protocol::pinf::MULTICAST_PORT);
 
-    let header_size = std::mem::size_of::<citp::protocol::Header>();
-    println_green!("HEADER SIZE = {}", header_size);
 
-    let mut frame_num = 0;
     loop {
         println!("state = {:?}", state);
 
         match state {
             State::Init => match socket.join_multicast_v4(&multi_addr, &inter) {
                 Ok(_) => {
-                    println!("UDP Multicast Joined!");
+                    println_green!("UDP Multicast Joined!");
                     state = State::Connect;
                 }
-                Err(err) => eprint!("join_multicast_v4 {:?}", err),
+                Err(err) => println_red!("join_multicast_v4 {:?}", err),
             },
             State::Connect => {
                 match socket.recv_from(&mut buf) {
@@ -80,41 +79,31 @@ fn main() -> io::Result<()> {
                                 if let pinf::PLoc::CONTENT_TYPE =
                                     &layer_two_content_type(&data, header_size).to_le_bytes()
                                 {
-                                    let ploc = citp::protocol::pinf::PLoc::read_from_bytes(
-                                        &data[header_size + CONTENT_TYPE_LEN..],
-                                    )?;
+                                    let ploc = citp::protocol::pinf::PLoc::read_from_bytes(&data[header_size + CONTENT_TYPE_LEN..])?;
                                     println_yellow!("PINF PLoc = {:#?}", ploc);
 
                                     let name = ploc.name.to_str().unwrap().to_owned();
-                                    let tcp_addr = format!(
-                                        "{}:{}",
-                                        extract_ip_address(&name),
-                                        ploc.listening_tcp_port
-                                    );
+                                    let tcp_addr = format!("{}:{}", extract_ip_address(&name), ploc.listening_tcp_port);
 
-                                    //Use the remote_addr to connect to the socket
-                                    // only if it isn't already connected
-                                    match socket.connect(&remote_addr) {
-                                        Ok(_) => (),
-                                        Err(err) => {
-                                            eprint!("couldn't connect to TCP socket addr {:?}", err)
-                                        }
-                                    }
+                                    // Use the remote_addr to connect to the socket only if it isn't already connected
+                                    // match socket.connect(&remote_addr) {
+                                    //     Ok(_) => (),
+                                    //     Err(err) => println_red!("couldn't connect to TCP socket addr {:?}", err), 
+                                    // }
 
-                                    let stream = TcpStream::connect(tcp_addr)
-                                        .expect("Could not connect to server");
+                                    let stream = TcpStream::connect(tcp_addr).expect("Could not connect to server");
                                     let mut citp_tcp = CitpTcp::new(stream)?;
-                                    let message = connect_to_capture();
-                                    //println!("pnam = {:#?}", message);
-                                    message
+                                    let pnam_message = connect_to_capture();
+                                    println_yellow!("PNam = {:#?}", pnam_message);
+                                    pnam_message
                                         .write_to_bytes(&mut citp_tcp.writer)
                                         .expect("Failed to write to server");
 
                                     // Tell TCP to send the buffered data on the wire
                                     citp_tcp.writer.flush()?;
                                     citp_tcp_stream = Some(citp_tcp);
-                                    println_green!("WE MADE A SUCCESFUL TCP CONNECTION!");
 
+                                    println_green!("WE MADE A SUCCESFUL TCP CONNECTION!");
                                     state = State::Request;
                                 }
                             }
@@ -127,7 +116,7 @@ fn main() -> io::Result<()> {
                 }
             }
             State::Request => {
-                //- Regularly send a CITP/PINF/PLoc message with no listening port.
+                // Regularly send a CITP/PINF/PLoc message with no listening port.
                 // Return the number of bytes writte so we can take the correct amount of bytes from the slice
                 let ploc = send_peer_location();
                 let mut ploc_buf = [0u8; 65535];
@@ -135,7 +124,8 @@ fn main() -> io::Result<()> {
                     Ok(_) => {
                         let len = ploc.pinf_header.citp_header.message_size as usize;
                         socket
-                            .send(&ploc_buf[..len])
+//                            .send(&ploc_buf[..len])
+                            .send_to(&ploc_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
                             .expect("Can't send buffer over UDP Socket");
                     }
                     Err(_) => {
@@ -148,33 +138,23 @@ fn main() -> io::Result<()> {
 
                     if let Some(CaexState::EnterShow) = caex_state {
                         println_green!("WE ENTERED THE SHOW!");
-
                         let enter_show = enter_show("kortex-test-suite");
-                        enter_show
-                            .write_to_bytes(&mut stream.writer)
-                            .expect("Failed to write to server");
+                        enter_show.write_to_bytes(&mut stream.writer).expect("Failed to write to server");
                         stream.writer.flush()?;
                     }
 
                     if let Some(CaexState::GetLaserFeedList) = caex_state {
                         println_green!("WE GOT A LASER FEED LIST REQUEST!");
-
-                        let feed_list = send_laser_feed_list();
-                        feed_list
-                            .write_to_bytes(&mut stream.writer)
-                            .expect("Failed to write to server");
+                        let feed_list = send_laser_feed_list(source_key);
+                        feed_list.write_to_bytes(&mut stream.writer).expect("Failed to write to server");
                         stream.writer.flush()?;
                     }
 
                     if let Some(CaexState::FixtureListRequest) = caex_state {
                         println_green!("WE GOT A FIXTURE LIST REQUEST!");
-
                         let fixture_list = new_fixture_list();
-                        fixture_list
-                            .write_to_bytes(&mut stream.writer)
-                            .expect("Failed to write to server");
+                        fixture_list.write_to_bytes(&mut stream.writer).expect("Failed to write to server");
                         stream.writer.flush()?;
-
                         state = State::Stream;
                     }
 
@@ -190,21 +170,18 @@ fn main() -> io::Result<()> {
                     //     .expect("Failed to write to server");
                     //stream.writer.flush()?;
                 }
-
-                // state = State::Stream;
             }
             State::Stream => {
                 eprintln!("starting a new stream");
 
                 for i in 0..NUM_LASERS {
-                    let laser_frame = stream_laser_frame(frame_num, i as u8);
+                    let laser_frame = stream_laser_frame(source_key, frame_num, i as u8);
                     let mut frame_buf = [0u8; 65535];
-                    laser_frame
-                        .write_to_bytes(&mut frame_buf[..])
-                        .expect("Failed to write to server");
+                    laser_frame.write_to_bytes(&mut frame_buf[..]).expect("Failed to write to server");
                     let len = laser_frame.caex_header.citp_header.message_size as usize;
                     socket
-                        .send(&frame_buf[..len])
+                        .send_to(&frame_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
+                        // .send(&frame_buf[..len])
                         .expect("Can't send buffer over UDP Socket");
                     println_green!("SENT LASER FRAME");
                 }
@@ -220,6 +197,7 @@ fn main() -> io::Result<()> {
                         eprintln!("UDP header = {:#?}", header);
 
                         // TODO, work out what data is actually being sent here.
+                        // this seems to be the data we are sending. 
                         match &header.content_type.to_le_bytes() {
                             pinf::Header::CONTENT_TYPE => {
                                 println_blue!("PINF: header_len: {} | data_len = {:?}",header_size,data.len());
@@ -244,8 +222,7 @@ fn main() -> io::Result<()> {
             }
         }
         eprintln!("sleep for 40ms");
-        // 25 fps
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        std::thread::sleep(std::time::Duration::from_millis(40)); // 25 fps
     }
 }
 
@@ -339,9 +316,7 @@ fn caex_header(caex_message_size: usize, content_type: u32) -> caex::Header {
     }
 }
 
-const SOURCE_KEY: u32 = 1;
-
-fn send_laser_feed_list<'a>() -> caex::Message<caex::LaserFeedList<'a>> {
+fn send_laser_feed_list<'a>(source_key: u32) -> caex::Message<caex::LaserFeedList<'a>> {
     let mut test_list = vec![];
     for i in 0..NUM_LASERS {
         let name = format!("nannou_laser {}", i);
@@ -350,7 +325,7 @@ fn send_laser_feed_list<'a>() -> caex::Message<caex::LaserFeedList<'a>> {
     }
 
     let feed_list = caex::LaserFeedList {
-        source_key: SOURCE_KEY,
+        source_key: source_key,
         feed_count: test_list.len() as u8,
         feed_names: std::borrow::Cow::from(test_list),
     };
@@ -366,6 +341,7 @@ pub fn map_range(val: f32, in_min: f32, in_max: f32, out_min: f32, out_max: f32)
 }
 
 fn stream_laser_frame<'a>(
+    source_key: u32,
     frame_num: u32,
     feed_index: u8,
 ) -> caex::Message<caex::LaserFeedFrame<'a>> {
@@ -405,7 +381,7 @@ fn stream_laser_frame<'a>(
         .collect();
 
     let feed_frame = caex::LaserFeedFrame {
-        source_key: SOURCE_KEY,
+        source_key,
         feed_index,
         frame_sequence: frame_num,
         point_count: points.len() as u16,

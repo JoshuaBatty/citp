@@ -17,6 +17,7 @@ socket2 = "0.5.3"
 
 [dev-dependencies]
 ansi_term = "0.12"
+rand = "0.8.4"
 
 [[example]]
 name = "demo"
