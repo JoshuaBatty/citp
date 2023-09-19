@@ -222,7 +222,7 @@ fn main() -> io::Result<()> {
             }
         }
         eprintln!("sleep for 40ms");
-        std::thread::sleep(std::time::Duration::from_millis(40)); // 25 fps
+        std::thread::sleep(std::time::Duration::from_millis(16));//40)); // 25 fps
     }
 }
 
