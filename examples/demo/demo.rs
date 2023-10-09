@@ -43,23 +43,23 @@ fn main() -> io::Result<()> {
     // socket.set_multicast_loop_v4(false)?;
     // socket.set_multicast_ttl_v4(2)?; // or another appropriate value
 
-    
-    let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), citp::protocol::pinf::MULTICAST_PORT);
+    let addr = citp::protocol::pinf::OLD_MULTICAST_ADDR; // this is [224, 0, 0, 180]
+    let port = citp::protocol::pinf::MULTICAST_PORT; // this is 4809
+
+    // let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
+    let address = SocketAddrV4::new(Ipv4Addr::new(224, 0, 0, 180), port);
     socket.bind(&address.into())?;
 
-    let addr = citp::protocol::pinf::OLD_MULTICAST_ADDR;
-    let multi_addr = Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]);
+    let multicast_address = Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]);
     let inter = Ipv4Addr::new(0, 0, 0, 0);
 
-    let multicast_address = Ipv4Addr::new(224, 0, 0, 180);
-    let destination = SocketAddr::new(IpAddr::V4(multicast_address), citp::protocol::pinf::MULTICAST_PORT);
-
+    let destination = SocketAddr::new(IpAddr::V4(multicast_address), port);
 
     loop {
         println!("state = {:?}", state);
 
         match state {
-            State::Init => match socket.join_multicast_v4(&multi_addr, &inter) {
+            State::Init => match socket.join_multicast_v4(&multicast_address, &inter) {
                 Ok(_) => {
                     println_green!("UDP Multicast Joined!");
                     state = State::Connect;
@@ -69,6 +69,7 @@ fn main() -> io::Result<()> {
             State::Connect => {
                 match socket.recv_from(&mut buf) {
                     Ok((len, remote_addr)) => {
+                        eprintln!("UDP remote_addr = {:?}", remote_addr);
                         // - Read the full base **Header** first.
                         let data = to_data(&mut buf, len);
                         let header = citp::protocol::Header::read_from_bytes(data)?;
@@ -116,22 +117,22 @@ fn main() -> io::Result<()> {
                 }
             }
             State::Request => {
-                // Regularly send a CITP/PINF/PLoc message with no listening port.
-                // Return the number of bytes writte so we can take the correct amount of bytes from the slice
-                let ploc = send_peer_location();
-                let mut ploc_buf = [0u8; 65535];
-                match ploc.write_to_bytes(&mut ploc_buf[..]) {
-                    Ok(_) => {
-                        let len = ploc.pinf_header.citp_header.message_size as usize;
-                        socket
-//                            .send(&ploc_buf[..len])
-                            .send_to(&ploc_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
-                            .expect("Can't send buffer over UDP Socket");
-                    }
-                    Err(_) => {
-                        println_red!("error writing ploc to bytes");
-                    }
-                }
+//                 // Regularly send a CITP/PINF/PLoc message with no listening port.
+//                 // Return the number of bytes writte so we can take the correct amount of bytes from the slice
+//                 let ploc = send_peer_location();
+//                 let mut ploc_buf = [0u8; 65535];
+//                 match ploc.write_to_bytes(&mut ploc_buf[..]) {
+//                     Ok(_) => {
+//                         let len = ploc.pinf_header.citp_header.message_size as usize;
+//                         socket
+// //                            .send(&ploc_buf[..len])
+//                             .send_to(&ploc_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
+//                             .expect("Can't send buffer over UDP Socket");
+//                     }
+//                     Err(_) => {
+//                         println_red!("error writing ploc to bytes");
+//                     }
+//                 }
 
                 if let Some(ref mut stream) = citp_tcp_stream {
                     let caex_state = stream.read_message()?;
