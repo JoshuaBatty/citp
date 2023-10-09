@@ -1,9 +1,6 @@
-extern crate ansi_term;
-extern crate citp;
-extern crate socket2;
-mod citp_tcp;
 #[macro_use]
 pub mod dbg;
+mod citp_tcp;
 
 use crate::citp_tcp::CaexState;
 use citp::protocol::{caex, pinf, sdmx, Ucs2, ReadFromBytes, SizeBytes, WriteToBytes};
