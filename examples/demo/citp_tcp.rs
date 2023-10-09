@@ -1,17 +1,16 @@
-use std::io::{self, BufRead, Write};
-use std::net::TcpStream;
+use citp::protocol::{ReadFromBytes, SizeBytes, caex, pinf, sdmx};
+use std::{
+    io::{self, BufRead, Write},
+    net::TcpStream,
+};
 
-use citp;
-use citp::protocol::ReadFromBytes;
-use citp::protocol::SizeBytes;
-use citp::protocol::{caex, pinf, sdmx};
-
+/// Represents a CITP TCP connection with buffered read/write functionality.
 pub struct CitpTcp {
-    // Our buffered reader & writers
     pub reader: io::BufReader<TcpStream>,
     pub writer: io::LineWriter<TcpStream>,
 }
 
+/// Possible states of the CAEX protocol.
 pub enum CaexState {
     Nack,
     GetLaserFeedList,
@@ -29,47 +28,27 @@ pub enum CaexState {
 impl CitpTcp {
     /// Encapsulate a TcpStream with buffered reader/writer functionality
     pub fn new(stream: TcpStream) -> io::Result<Self> {
-        // Both BufReader and LineWriter need to own a stream
-        // We can clone the stream to simulate splitting Tx & Rx with `try_clone()`
         let writer = io::LineWriter::new(stream.try_clone()?);
         let reader = io::BufReader::new(stream);
         Ok(Self { reader, writer })
     }
 
-    /// Write the given message (appending a newline) to the TcpStream
+    /// Sends a given message (appending a newline) over the TCP stream.
     pub fn send_message(&mut self, message: &str) -> io::Result<()> {
         self.writer.write(&message.as_bytes())?;
-        // This will also signal a `writer.flush()` for us; thanks LineWriter!
-        self.writer.write(&['\n' as u8])?;
+        self.writer.write(&['\n' as u8])?; // This will also signal a `writer.flush()` for us; thanks LineWriter!
         Ok(())
     }
 
-    /// Read a received message from the TcpStream
+    /// Reads a received message from the TCP stream and returns the associated CAEX state.
     pub fn read_message(&mut self) -> io::Result<Option<CaexState>> {
         let mut caex_state: Option<CaexState> = None;
-
-        eprintln!("TCP: read_message()");
-        eprintln!("TCP: len = {}", self.reader.buffer().len());
-
         // Read current current data in the TcpStream
-        let mut received: Vec<u8> = match self.reader.buffer().is_empty() {
-            true => {
-                eprintln!("TCP: buffer is empty");
-                self.reader.fill_buf()?.to_vec()
-            }
-            false => {
-                eprintln!("TCP: buffer is not empty");
-                self.reader.buffer().to_vec()
-            }
-        };
+        let mut received = self.reader.fill_buf()?.to_vec();
 
         // Do some processing or validation to make sure the whole line is present?
         // ...
 
-        println!(
-            "TCP: start of new message: received len = {}",
-            received.len()
-        );
         let mut total_received_bytes_processed = 0;
 
         while !received.is_empty() {
@@ -79,7 +58,7 @@ impl CitpTcp {
             println!("header_size = {:#?}", header_size);
 
             let read_offset = header_size + super::CONTENT_TYPE_LEN;
-            let message_content_type = layer_two_content_type(&received, header_size).to_le_bytes();
+            let message_content_type = super::layer_two_content_type(&received, header_size).to_le_bytes();
             match &header.content_type.to_le_bytes() {
                 pinf::Header::CONTENT_TYPE => {
                     // - Read the header for the second layer.
@@ -105,7 +84,7 @@ impl CitpTcp {
                     }
                 }
                 caex::Header::CONTENT_TYPE => {
-                    match layer_two_content_type(&received, header_size) {
+                    match super::layer_two_content_type(&received, header_size) {
                         caex::Nack::CONTENT_TYPE => {
                             println!("TCP: NACK Message recieved!");
                         }
@@ -161,7 +140,6 @@ impl CitpTcp {
                         header.content_type
                     );
                     panic!("Un recognized TCP Header: {:#?}", header);
-                    break;
                 }
             }
 
@@ -171,37 +149,16 @@ impl CitpTcp {
                 received.len()
             );
 
-            // if received.len() <= header.message_size as usize {
-            //     eprintln!("TCP: Break!");
-            //     break;
-            // }
-
             eprintln!("TCP: Draining {} bytes", header.message_size);
             total_received_bytes_processed += header.message_size as usize;
             received = received.drain(header.message_size as usize..).collect();
-            break; // Try forcing only one message at a time.
-                   //let header = citp::protocol::Header::read_from_bytes(&message[..]).unwrap();
-                   //println!("header 2 = {:#?}", header);
+            break;
         }
 
         // Mark the bytes read as consumed so the buffer will not return them in a subsequent read
-        self.reader.consume(total_received_bytes_processed); //received.len());
+        self.reader.consume(total_received_bytes_processed);
         eprintln!("TCP: Consume {} bytes", received.len());
 
         Ok(caex_state)
-
-        // String::from_utf8(received)
-        //     .map(|msg| println!("{}", msg))
-        //     .map_err(|_| {
-        //         io::Error::new(
-        //             io::ErrorKind::InvalidData,
-        //             "Couldn't parse received string as utf8",
-        //         )
-        //     })
     }
-}
-
-fn layer_two_content_type(data: &[u8], header_size: usize) -> u32 {
-    let slice = &data[header_size..header_size + super::CONTENT_TYPE_LEN];
-    u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]])
 }

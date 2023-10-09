@@ -1,5 +1,4 @@
 
-
 /// Macro to print text in red.
 macro_rules! println_red {
     ($($arg:tt)*) => ({

@@ -61,7 +61,7 @@ fn main() -> io::Result<()> {
                 }
                 Err(err) => println_red!("join_multicast_v4 {:?}", err),
             },
-            State::Connect => {
+            State::Connect => {                
                 match recv_socket.recv_from(&mut buf) {
                     Ok((len, remote_addr)) => {
                         eprintln!("UDP remote_addr = {:?}", remote_addr);
@@ -106,22 +106,7 @@ fn main() -> io::Result<()> {
                 }
             }
             State::Request => {
-                // Regularly send a CITP/PINF/PLoc message with no listening port.
-                // Return the number of bytes writte so we can take the correct amount of bytes from the slice
-                let ploc = send_peer_location();
-                let mut ploc_buf = [0u8; 65535];
-                match ploc.write_to_bytes(&mut ploc_buf[..]) {
-                    Ok(_) => {
-                        let len = ploc.pinf_header.citp_header.message_size as usize;
-                        send_socket
-//                            .send(&ploc_buf[..len])
-                            .send_to(&ploc_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
-                            .expect("Can't send buffer over UDP Socket");
-                    }
-                    Err(_) => {
-                        println_red!("error writing ploc to bytes");
-                    }
-                }
+                send_peer_location(&send_socket, destination);
 
                 if let Some(ref mut stream) = citp_tcp_stream {
                     let caex_state = stream.read_message()?;
@@ -164,21 +149,24 @@ fn main() -> io::Result<()> {
             State::Stream => {
                 eprintln!("starting a new stream");
 
+                if frame_num % 100 == 0 {
+                    send_peer_location(&send_socket, destination);
+                }
+
                 for i in 0..NUM_LASERS {
                     let laser_frame = stream_laser_frame(source_key, frame_num, i as u8);
                     let mut frame_buf = [0u8; 65535];
                     laser_frame.write_to_bytes(&mut frame_buf[..]).expect("Failed to write to server");
                     let len = laser_frame.caex_header.citp_header.message_size as usize;
                     send_socket
-                        .send_to(&frame_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
-                        // .send(&frame_buf[..len])
+                        .send_to(&frame_buf[..len], &SockAddr::from(destination))
                         .expect("Can't send buffer over UDP Socket");
                     println_green!("SENT LASER FRAME");
                 }
                 frame_num += 1;
 
                 match recv_socket.recv_from(&mut buf) {
-                    Ok((len, remote_addr)) => {
+                    Ok((len, ..)) => {
                         // - Read the full base **Header** first.
                         let data = to_data(&mut buf, len);
                         let header = citp::protocol::Header::read_from_bytes(data).unwrap();
@@ -186,8 +174,6 @@ fn main() -> io::Result<()> {
 
                         eprintln!("UDP header = {:#?}", header);
 
-                        // TODO, work out what data is actually being sent here.
-                        // this seems to be the data we are sending. 
                         match &header.content_type.to_le_bytes() {
                             pinf::Header::CONTENT_TYPE => {
                                 println_blue!("PINF: header_len: {} | data_len = {:?}",header_size,data.len());
@@ -202,18 +188,16 @@ fn main() -> io::Result<()> {
                         println_red!("client: had a problem: {}", err);
                     }
                 }
-                eprintln!("end of socket.recv_from");
-
-                // if let Some(ref mut stream) = citp_tcp_stream {
-                //     eprintln!("is there a tcp message?");
-                //     stream.read_message()?;
-                // }
-                // eprintln!("end of stream");
             }
         }
-        eprintln!("sleep for 40ms");
-        std::thread::sleep(std::time::Duration::from_millis(16));//40)); // 25 fps
+        eprintln!("sleep for 16ms");
+        std::thread::sleep(std::time::Duration::from_millis(16));
     }
+}
+
+pub fn layer_two_content_type(data: &[u8], header_size: usize) -> u32 {
+    let slice = &data[header_size..header_size + CONTENT_TYPE_LEN];
+    u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]])
 }
 
 fn to_data(buf: &mut [MaybeUninit<u8>], len: usize) -> &[u8] {
@@ -225,11 +209,6 @@ fn extract_ip_address(s: &String) -> String {
     let start_bytes = s.find("(").unwrap_or(0) + 1;
     let end_bytes = s.find(")").unwrap_or(s.len());
     s[start_bytes..end_bytes].to_string()
-}
-
-fn layer_two_content_type(data: &[u8], header_size: usize) -> u32 {
-    let slice = &data[header_size..header_size + CONTENT_TYPE_LEN];
-    u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]])
 }
 
 fn pinf_header(pinf_message_size: usize, content_type: u32) -> pinf::Header {
@@ -248,14 +227,14 @@ fn pinf_header(pinf_message_size: usize, content_type: u32) -> pinf::Header {
     }
 }
 
-fn send_peer_location() -> pinf::Message<pinf::PLoc> {
+fn peer_location() -> pinf::Message<pinf::PLoc> {
+    let error_msg = "CString::new failed";
     let ploc = pinf::PLoc {
         listening_tcp_port: 0,
-        kind: CString::new("LightingConsole").expect("CString::new failed"),
-        name: CString::new("Rusty Previz Tool").expect("CString::new failed"),
-        state: CString::new("Firing ze lasers").expect("CString::new failed"),
+        kind: CString::new("LightingConsole").expect(error_msg),
+        name: CString::new("Rusty Previz Tool").expect(error_msg),
+        state: CString::new("Firing ze lasers").expect(error_msg),
     };
-
     pinf::Message {
         pinf_header: pinf_header(
             ploc.size_bytes(),
@@ -265,11 +244,28 @@ fn send_peer_location() -> pinf::Message<pinf::PLoc> {
     }
 }
 
+// Regularly send a CITP/PINF/PLoc message with no listening port.
+// Return the number of bytes written so we can take the correct amount of bytes from the slice
+fn send_peer_location(send_socket: &Socket, destination: SocketAddr) {
+    let ploc = peer_location();
+    let mut ploc_buf = [0u8; 65535];
+    match ploc.write_to_bytes(&mut ploc_buf[..]) {
+        Ok(_) => {
+            let len = ploc.pinf_header.citp_header.message_size as usize;
+            send_socket
+                .send_to(&ploc_buf[..len], &SockAddr::from(destination))
+                .expect("Can't send buffer over UDP Socket");
+        }
+        Err(_) => {
+            println_red!("error writing ploc to bytes");
+        }
+    }
+}
+
 fn connect_to_capture() -> pinf::Message<pinf::PNam> {
     let pnam = pinf::PNam {
         name: CString::new("Rusty Laser Software").expect("CString::new failed"),
     };
-
     pinf::Message {
         pinf_header: pinf_header(
             pnam.size_bytes(),
@@ -309,11 +305,10 @@ fn caex_header(caex_message_size: usize, content_type: u32) -> caex::Header {
 fn send_laser_feed_list<'a>(source_key: u32) -> caex::Message<caex::LaserFeedList<'a>> {
     let mut test_list = vec![];
     for i in 0..NUM_LASERS {
-        let name = format!("nannou_laser {}", i);
+        let name = format!("rusty_laser {}", i);
         let ucs2 = Ucs2::from_str(name.as_str()).unwrap();
         test_list.push(ucs2);
     }
-
     let feed_list = caex::LaserFeedList {
         source_key: source_key,
         feed_count: test_list.len() as u8,
@@ -323,11 +318,6 @@ fn send_laser_feed_list<'a>(source_key: u32) -> caex::Message<caex::LaserFeedLis
         caex_header: caex_header(feed_list.size_bytes(), caex::LaserFeedList::CONTENT_TYPE),
         message: feed_list,
     }
-}
-
-/// Map a value from a given range to a new given range.
-pub fn map_range(val: f32, in_min: f32, in_max: f32, out_min: f32, out_max: f32) -> f32 {
-    (val - in_min) / (in_max - in_min) * (out_max - out_min) + out_min
 }
 
 fn stream_laser_frame<'a>(
@@ -453,4 +443,9 @@ fn clay_paky_sharpy<'a>() -> caex::Fixture<'a> {
             angles: [-0.0, 0.0, 0.0],
         },
     }
+}
+
+/// Map a value from a given range to a new given range.
+pub fn map_range(val: f32, in_min: f32, in_max: f32, out_min: f32, out_max: f32) -> f32 {
+    (val - in_min) / (in_max - in_min) * (out_max - out_min) + out_min
 }
