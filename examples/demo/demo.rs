@@ -29,37 +29,32 @@ enum State {
     Stream,
 }
 
-
 fn main() -> io::Result<()> {
     let mut state = State::Init;
     let mut citp_tcp_stream: Option<CitpTcp> = None;
     let mut buf: [MaybeUninit<u8>; 65535] = unsafe { MaybeUninit::uninit().assume_init() };
     let mut frame_num = 0;
-    let source_key = 1;//rand::random::<u32>();
+    let source_key = rand::random::<u32>();
 
-    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-    socket.set_reuse_address(true)?;
-    socket.set_nonblocking(true)?;
-    // socket.set_multicast_loop_v4(false)?;
-    // socket.set_multicast_ttl_v4(2)?; // or another appropriate value
-
-    let addr = citp::protocol::pinf::OLD_MULTICAST_ADDR; // this is [224, 0, 0, 180]
-    let port = citp::protocol::pinf::MULTICAST_PORT; // this is 4809
-
-    // let address = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), port);
-    let address = SocketAddrV4::new(Ipv4Addr::new(224, 0, 0, 180), port);
-    socket.bind(&address.into())?;
-
+    let addr = citp::protocol::pinf::OLD_MULTICAST_ADDR;
+    let port = citp::protocol::pinf::MULTICAST_PORT;
     let multicast_address = Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]);
-    let inter = Ipv4Addr::new(0, 0, 0, 0);
-
     let destination = SocketAddr::new(IpAddr::V4(multicast_address), port);
+
+    // Sending socket
+    let send_socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+
+    // Receiving socket
+    let recv_socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    recv_socket.set_reuse_address(true)?;
+    recv_socket.set_nonblocking(true)?;
+    recv_socket.bind(&SocketAddrV4::new(multicast_address, port).into())?;
 
     loop {
         println!("state = {:?}", state);
 
         match state {
-            State::Init => match socket.join_multicast_v4(&multicast_address, &inter) {
+            State::Init => match recv_socket.join_multicast_v4(&multicast_address, &Ipv4Addr::new(0, 0, 0, 0)) {
                 Ok(_) => {
                     println_green!("UDP Multicast Joined!");
                     state = State::Connect;
@@ -67,7 +62,7 @@ fn main() -> io::Result<()> {
                 Err(err) => println_red!("join_multicast_v4 {:?}", err),
             },
             State::Connect => {
-                match socket.recv_from(&mut buf) {
+                match recv_socket.recv_from(&mut buf) {
                     Ok((len, remote_addr)) => {
                         eprintln!("UDP remote_addr = {:?}", remote_addr);
                         // - Read the full base **Header** first.
@@ -85,12 +80,6 @@ fn main() -> io::Result<()> {
 
                                     let name = ploc.name.to_str().unwrap().to_owned();
                                     let tcp_addr = format!("{}:{}", extract_ip_address(&name), ploc.listening_tcp_port);
-
-                                    // Use the remote_addr to connect to the socket only if it isn't already connected
-                                    // match socket.connect(&remote_addr) {
-                                    //     Ok(_) => (),
-                                    //     Err(err) => println_red!("couldn't connect to TCP socket addr {:?}", err), 
-                                    // }
 
                                     let stream = TcpStream::connect(tcp_addr).expect("Could not connect to server");
                                     let mut citp_tcp = CitpTcp::new(stream)?;
@@ -117,22 +106,22 @@ fn main() -> io::Result<()> {
                 }
             }
             State::Request => {
-//                 // Regularly send a CITP/PINF/PLoc message with no listening port.
-//                 // Return the number of bytes writte so we can take the correct amount of bytes from the slice
-//                 let ploc = send_peer_location();
-//                 let mut ploc_buf = [0u8; 65535];
-//                 match ploc.write_to_bytes(&mut ploc_buf[..]) {
-//                     Ok(_) => {
-//                         let len = ploc.pinf_header.citp_header.message_size as usize;
-//                         socket
-// //                            .send(&ploc_buf[..len])
-//                             .send_to(&ploc_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
-//                             .expect("Can't send buffer over UDP Socket");
-//                     }
-//                     Err(_) => {
-//                         println_red!("error writing ploc to bytes");
-//                     }
-//                 }
+                // Regularly send a CITP/PINF/PLoc message with no listening port.
+                // Return the number of bytes writte so we can take the correct amount of bytes from the slice
+                let ploc = send_peer_location();
+                let mut ploc_buf = [0u8; 65535];
+                match ploc.write_to_bytes(&mut ploc_buf[..]) {
+                    Ok(_) => {
+                        let len = ploc.pinf_header.citp_header.message_size as usize;
+                        send_socket
+//                            .send(&ploc_buf[..len])
+                            .send_to(&ploc_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
+                            .expect("Can't send buffer over UDP Socket");
+                    }
+                    Err(_) => {
+                        println_red!("error writing ploc to bytes");
+                    }
+                }
 
                 if let Some(ref mut stream) = citp_tcp_stream {
                     let caex_state = stream.read_message()?;
@@ -180,7 +169,7 @@ fn main() -> io::Result<()> {
                     let mut frame_buf = [0u8; 65535];
                     laser_frame.write_to_bytes(&mut frame_buf[..]).expect("Failed to write to server");
                     let len = laser_frame.caex_header.citp_header.message_size as usize;
-                    socket
+                    send_socket
                         .send_to(&frame_buf[..len], &SockAddr::from(destination as std::net::SocketAddr))
                         // .send(&frame_buf[..len])
                         .expect("Can't send buffer over UDP Socket");
@@ -188,7 +177,7 @@ fn main() -> io::Result<()> {
                 }
                 frame_num += 1;
 
-                match socket.recv_from(&mut buf) {
+                match recv_socket.recv_from(&mut buf) {
                     Ok((len, remote_addr)) => {
                         // - Read the full base **Header** first.
                         let data = to_data(&mut buf, len);
