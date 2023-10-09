@@ -38,12 +38,12 @@ pub enum NackReason {
 impl From<u8> for NackReason {
     fn from(orig: u8) -> Self {
         match orig {
-            0x00 => return NackReason::UnknownRequest,
-            0x01 => return NackReason::IncorrectRequest,
-            0x02 => return NackReason::InternalError,
-            0x03 => return NackReason::RequestRefused,
+            0x00 => NackReason::UnknownRequest,
+            0x01 => NackReason::IncorrectRequest,
+            0x02 => NackReason::InternalError,
+            0x03 => NackReason::RequestRefused,
             _ => unreachable!(),
-        };
+        }
     }
 }
 
@@ -127,11 +127,11 @@ pub enum FixtureListMessageType {
 impl From<u8> for FixtureListMessageType {
     fn from(orig: u8) -> Self {
         match orig {
-            0x00 => return FixtureListMessageType::ExistingPatchList,
-            0x01 => return FixtureListMessageType::NewFixture,
-            0x02 => return FixtureListMessageType::ExchangeFixture,
+            0x00 => FixtureListMessageType::ExistingPatchList,
+            0x01 => FixtureListMessageType::NewFixture,
+            0x02 => FixtureListMessageType::ExchangeFixture,
             _ => unreachable!(),
-        };
+        }
     }
 }
 
@@ -160,14 +160,14 @@ pub enum IdentifierType {
 impl From<u8> for IdentifierType {
     fn from(orig: u8) -> Self {
         match orig {
-            0x00 => return IdentifierType::RDMDeviceModelId,
-            0x01 => return IdentifierType::RDMPersonalityId,
-            0x02 => return IdentifierType::AtlaBaseFixtureId,
-            0x03 => return IdentifierType::AtlaBaseModeId,
-            0x04 => return IdentifierType::CaptureInstanceId,
-            0x05 => return IdentifierType::RDMManufacturerId,
+            0x00 => IdentifierType::RDMDeviceModelId,
+            0x01 => IdentifierType::RDMPersonalityId,
+            0x02 => IdentifierType::AtlaBaseFixtureId,
+            0x03 => IdentifierType::AtlaBaseModeId,
+            0x04 => IdentifierType::CaptureInstanceId,
+            0x05 => IdentifierType::RDMManufacturerId,
             _ => unreachable!(),
-        };
+        }
     }
 }
 
@@ -398,7 +398,7 @@ impl<'a> LaserFeedFrame<'a> {
 
 impl WriteToBytes for Header {
     fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_bytes(&self.citp_header)?;
+        writer.write_bytes(self.citp_header)?;
         writer.write_u32::<LE>(self.content_type)?;
         Ok(())
     }
@@ -409,7 +409,7 @@ where
     T: WriteToBytes,
 {
     fn write_to_bytes<W: WriteBytesExt>(&self, mut writer: W) -> io::Result<()> {
-        writer.write_bytes(&self.caex_header)?;
+        writer.write_bytes(self.caex_header)?;
         writer.write_bytes(&self.message)?;
         Ok(())
     }

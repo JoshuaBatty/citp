@@ -29,9 +29,12 @@
 //! - Match on the `content_type` field of the second layer to determine what type to read.
 
 pub use byteorder::{ReadBytesExt, WriteBytesExt, LE};
-use std::ffi::CString;
-use std::hash::{Hash, Hasher};
-use std::{fmt, io, mem};
+use std::{
+    ffi::CString,
+    fmt, io, mem,
+    hash::{Hash, Hasher},
+    str::FromStr,
+};
 
 /// ## CITP/PINF - Peer Information Layer
 ///
@@ -425,7 +428,7 @@ pub struct Ucs2(Vec<u16>);
 
 impl Ucs2 {
     /// Read ucs2 bytes until [0,0] is found
-    fn read_from_bytes<R: ReadBytesExt>(mut reader: R) -> io::Result<Self> {
+    fn read_from_bytes<R: ReadBytesExt>(reader: R) -> io::Result<Self> {
         let mut ucs2: Ucs2 = Ucs2(Vec::new());
         let mut bytes = reader.bytes();
         while let Some(curr) = bytes.next() {
@@ -451,17 +454,20 @@ impl Ucs2 {
         Ok(())
     }
 
-    pub fn from_str(s: &str) -> Result<Self, ucs2::Error> {
-        let mut ucs2_buf = vec![0u16; s.len()];
-        ucs2::encode(s, &mut ucs2_buf)?;
-        Ok(Ucs2(ucs2_buf))
-    }
-
     pub fn to_string(&self) -> Result<String, ucs2::Error> {
         let mut utf8_buf = vec![0u8; self.0.len()];
         ucs2::decode(&self.0, &mut utf8_buf)?;
         let name = std::str::from_utf8(&utf8_buf).unwrap().clone().to_string();
         Ok(name)
+    }
+}
+
+impl FromStr for Ucs2 {
+    type Err = ucs2::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut ucs2_buf = vec![0u16; s.len()];
+        ucs2::encode(s, &mut ucs2_buf)?;
+        Ok(Ucs2(ucs2_buf))
     }
 }
 

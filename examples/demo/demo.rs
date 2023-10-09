@@ -15,6 +15,7 @@ use std::{
     io::{self, Write},
     mem::MaybeUninit,
     net::{Ipv4Addr, SocketAddrV4, TcpStream, SocketAddr, IpAddr},
+    str::FromStr,
 };
 
 pub const CITP_HEADER_LEN: usize = 20;
