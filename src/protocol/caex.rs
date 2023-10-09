@@ -1,4 +1,4 @@
-use protocol::{
+use crate::protocol::{
     self, ReadBytesExt, ReadFromBytes, SizeBytes, WriteBytes, WriteBytesExt, WriteToBytes, LE,
 };
 use std::borrow::Cow;
