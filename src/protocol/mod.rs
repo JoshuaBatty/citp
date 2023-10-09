@@ -169,6 +169,10 @@ pub mod finf;
 /// - Fragmented PNG - PNG data fragments (for streams oly). Requires MSEX 1.2.
 pub mod msex;
 
+/// ## CITP/CAEX - Capture Extensions layer
+///
+/// The CITP/CAEX "Capture Extensions" layer is a set of networking messages implemented 
+/// as a private CITP (http://www.citp-protocol.org) layer. 
 pub mod caex;
 
 /// A trait for writing any of the CITP protocol types to little-endian bytes.
